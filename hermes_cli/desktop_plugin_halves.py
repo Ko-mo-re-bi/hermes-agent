@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 PACKAGE_MARKER = ".hermes-package.json"
 _GIT_ORIGIN = re.compile(r'\[remote "origin"\][^[]*?url\s*=\s*(\S+)')
 #: Electron serializes every writer of the root in its main process; the server's threads do here.
-_ROOT_WRITER = threading.Lock()
+#: Public: ``desktop_plugin_install`` takes it too, so a clone-publish never interleaves with a
+#: reconcile pass copying the same package's folder.
+ROOT_WRITER = threading.Lock()
 
 
 def _list_dirs(folder: Path, *, follow_links: bool = False) -> list[str]:
@@ -102,16 +104,18 @@ def _same_file(a: Path, b: Path) -> bool:
         return False
 
 
-def _publish(source_dir: Path, target: Path, marker: dict) -> None:
+def _publish(source_dir: Path, target: Path, marker: dict | None) -> None:
     """Copy through a staging sibling and rename the finished tree into place, marker included, so a
     failure leaves the old folder or none: never a partial, marker-less one that a later pass would
-    take for a hand install."""
+    take for a hand install. A standalone plugin is published with no marker (``None``): one would
+    claim another package's agent half."""
     target.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{target.name}.staging-", dir=target.parent))
     staged = staging / target.name
     try:
         shutil.copytree(source_dir, staged, symlinks=True)
-        _write_marker(staged, marker)
+        if marker is not None:
+            _write_marker(staged, marker)
         if target.is_symlink():
             target.unlink()
         elif target.exists():
@@ -119,6 +123,23 @@ def _publish(source_dir: Path, target: Path, marker: dict) -> None:
         os.rename(staged, target)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+def publish_desktop_tree(source_dir: Path, target: Path, marker: dict | None) -> None:
+    """Publish a desktop plugin folder into the app root: staged copy, optional package marker, atomic
+    rename. The caller holds :data:`ROOT_WRITER` around its existence check and this call, so a
+    concurrent reconcile pass cannot copy the same folder underneath it."""
+    _publish(source_dir, target, marker)
+
+
+def read_package_marker(folder: Path) -> dict | None:
+    """The package marker on an installed folder, if it is one this root's writers put down."""
+    return _read_marker(folder)
+
+
+def mtime_ms(st: os.stat_result) -> float:
+    """``Stats.mtimeMs`` as Node computes it, for markers written outside :func:`materialize_desktop_half`."""
+    return _mtime_ms(st)
 
 
 def materialize_desktop_half(package_dir: Path, app_root: Path, name: str) -> Path | None:
@@ -187,7 +208,7 @@ def reconcile_desktop_halves(hermes_root: Path, app_root: Path) -> list[str]:
     """Materialize every local home's desktop halves into *app_root* (first home wins for a name in
     several profiles, the default home first) and drop copies whose package is gone. Returns the
     folders it wrote or removed."""
-    with _ROOT_WRITER:
+    with ROOT_WRITER:
         touched: list[str] = []
         seen: set[str] = set()
         homes = [hermes_root, *(hermes_root / "profiles" / name for name in _list_dirs(hermes_root / "profiles"))]

@@ -720,7 +720,13 @@ the tab is on. A new or removed plugin folder shows up within seconds; an edited
 **⌘K → Reload desktop plugins**, since a browser cannot watch the host's files. The desktop half of
 an agent+desktop package is copied into the folder by the host itself, so it also appears on a
 headless host that native Desktop never runs on.
-Install and remove desktop plugins from native Desktop or in the folder itself; a plugin's folder
+
+**Install** works from the Webapp too: **Capabilities → Plugins → Install** inspects the repository
+first, then has the host that serves the tab clone the plugin into that folder (a desktop-only
+repository, or the desktop half of a package) — the same install native Desktop makes in Electron, and
+the same folder name and package marker. A plugin installed this way loads on the next scan; nothing
+else has to be done on the server by hand. Removing one from **Capabilities → Plugins** deletes the
+folder on that host; the desktop half of a package is removed with the package. A plugin's folder
 access (`ctx.files`) is not available in a browser.
 
 **Capabilities → Plugins** is the one place for everything that extends

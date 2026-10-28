@@ -383,6 +383,8 @@ export interface AgentPluginInspection {
 
 // `_run_action`'s unknown action, and JSON-RPC's unknown method.
 const INSPECT_UNSUPPORTED_CODES = new Set([4017, -32601])
+/** A backend that predates `install_desktop`: it answers the action as unknown (4017). */
+const INSTALL_DESKTOP_UNSUPPORTED_CODES = new Set([4017, -32601])
 
 /** Inspect a source through the backend (`plugins.manage inspect`): it clones into a temp folder and
  *  reports which halves ship, installing and running nothing. For a renderer with no Git of its own
@@ -439,6 +441,82 @@ export async function inspectAgentPlugin(
       unavailable: e instanceof JsonRpcGatewayError && INSPECT_UNSUPPORTED_CODES.has(e.code ?? 0),
       error: e instanceof Error ? e.message : String(e)
     }
+  }
+}
+
+/** Install a repository's desktop half onto the host that serves this client (`plugins.manage
+ *  install_desktop`). Native Desktop clones one itself; a browser-hosted renderer has no disk of its
+ *  own, so it asks the backend that serves the tab and the plugin appears in the folder the Webapp
+ *  already loads. Never rejects. */
+export async function installDesktopPluginHalf(
+  request: GatewayRequest,
+  opts: { identifier: string; catalogName?: string; force?: boolean; profile?: string | null }
+): Promise<{
+  ok: boolean
+  pairedWithAgent?: boolean
+  pluginName?: string
+  /** The backend predates the action: no retry changes that (a build older than this one). */
+  unsupported?: boolean
+  warnings: string[]
+  error?: string
+}> {
+  try {
+    const result = await request<{
+      ok?: boolean
+      plugin_name?: string
+      paired_with_agent?: boolean
+      warnings?: string[]
+      error?: string
+    }>(
+      'plugins.manage',
+      withProfile(
+        {
+          action: 'install_desktop',
+          identifier: opts.identifier,
+          force: Boolean(opts.force),
+          ...(opts.catalogName ? { catalog_name: opts.catalogName } : {})
+        },
+        opts.profile
+      ),
+      PLUGIN_INSTALL_REQUEST_TIMEOUT_MS
+    )
+
+    if (!result?.ok) {
+      return { ok: false, warnings: [], error: result?.error || 'Desktop plugin install failed' }
+    }
+
+    return {
+      ok: true,
+      pluginName: result.plugin_name,
+      pairedWithAgent: Boolean(result.paired_with_agent),
+      warnings: result.warnings ?? []
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      unsupported: e instanceof JsonRpcGatewayError && INSTALL_DESKTOP_UNSUPPORTED_CODES.has(e.code ?? 0),
+      warnings: [],
+      error: e instanceof Error ? e.message : String(e)
+    }
+  }
+}
+
+/** Remove one installed desktop plugin folder from the host that serves this client
+ *  (`plugins.manage remove_desktop`); a package's own half is refused by the backend unless forced.
+ *  Never rejects. */
+export async function removeDesktopPluginHalf(
+  request: GatewayRequest,
+  opts: { force?: boolean; name: string; profile?: string | null }
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const result = await request<{ ok?: boolean; error?: string }>(
+      'plugins.manage',
+      withProfile({ action: 'remove_desktop', name: opts.name, force: Boolean(opts.force) }, opts.profile)
+    )
+
+    return result?.ok ? { ok: true } : { ok: false, error: result?.error || 'Desktop plugin removal failed' }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 }
 

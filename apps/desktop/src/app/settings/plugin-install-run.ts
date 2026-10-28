@@ -1,11 +1,13 @@
 import { enablePackageDesktopHalf } from '@/contrib/plugins-store'
 import { discoverRuntimePlugins } from '@/contrib/runtime-loader'
 import type { useI18n } from '@/i18n'
+import { isBrowserHostedDesktop } from '@/lib/platform'
 import {
   type AgentPluginInstallResult,
   type AgentPluginLiveNow,
   type GatewayRequest,
   installAgentPlugin,
+  installDesktopPluginHalf,
   loadAgentPlugins
 } from '@/store/agent-plugins'
 import { notify } from '@/store/notifications'
@@ -26,11 +28,11 @@ const HINT_COMPONENTS = {
   desktop: probe => ({ agent: false, desktop: probe.desktop })
 } satisfies Record<'agent' | 'both' | 'desktop', (probe: ProbeResult) => InstallComponents>
 
-/** Whether this app can put a desktop half down. Native Desktop clones or copies one; the browser-hosted
- *  app has no disk of its own and its server materialises none, so there a package installs its agent
- *  half alone. */
+/** Whether this app can put a desktop half down. Native Desktop clones or copies one in Electron; the
+ *  browser-hosted app has no disk of its own, so the host that serves it clones one there
+ *  (`plugins.manage install_desktop`) and the Webapp's loader picks it up. */
 export function desktopInstallSupported(): boolean {
-  return Boolean(window.hermesDesktop?.installDesktopPlugin)
+  return Boolean(window.hermesDesktop?.installDesktopPlugin) || isBrowserHostedDesktop()
 }
 
 /** What an install puts down: every half the repository has, narrowed by a legacy deep link or by
@@ -139,19 +141,24 @@ async function installAgentHalf(plan: InstallPlan, deps: InstallDeps, report: Re
   return result
 }
 
-async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, report: Report): Promise<void> {
+async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, report: Report, deps: InstallDeps): Promise<void> {
+  // Native Desktop clones it in Electron; a browser-hosted tab asks the host that serves it, and the
+  // plugin lands in the folder this Webapp already loads.
   const installFn = window.hermesDesktop?.installDesktopPlugin
 
-  if (!installFn) {
-    report.errors.push(copy.desktopUnavailable)
-
-    return
-  }
-
-  const result = await installFn({ identifier: plan.request.repo, force: plan.force })
+  const result: { error?: string; ok: boolean; pluginName?: string; unsupported?: boolean } = installFn
+    ? await installFn({ identifier: plan.request.repo, force: plan.force })
+    : await installDesktopPluginHalf(deps.requestGateway, {
+        identifier: plan.request.repo,
+        catalogName: plan.request.catalogName,
+        force: plan.force,
+        profile: plan.profile
+      })
 
   if (!result.ok) {
-    report.errors.push(result.error || copy.desktopFailed)
+    // A backend older than this build has no place to put the half: say what this environment can do,
+    // which is what an install without Electron always said.
+    report.errors.push(result.unsupported ? copy.desktopUnavailable : result.error || copy.desktopFailed)
 
     return
   }
@@ -163,7 +170,7 @@ async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, repor
 async function installDesktopHalf(
   plan: InstallPlan,
   components: InstallComponents,
-  copy: InstallModalCopy,
+  deps: InstallDeps,
   report: Report,
   agentResult?: AgentPluginInstallResult
 ): Promise<void> {
@@ -175,14 +182,14 @@ async function installDesktopHalf(
     const touched = (await window.hermesDesktop?.reconcileDesktopPlugins?.()) ?? []
 
     if (agentResult?.ok || touched.length > 0) {
-      report.successes.push(copy.desktopSuccess(plan.probe.agentName ?? plan.request.repo))
+      report.successes.push(deps.copy.desktopSuccess(plan.probe.agentName ?? plan.request.repo))
     }
 
     if (touched.length > 0) {
       await discoverRuntimePlugins()
     }
   } else {
-    await cloneDesktopHalf(plan, copy, report)
+    await cloneDesktopHalf(plan, deps.copy, report, deps)
   }
 
   // The desktop half of a unified package lands opt-in; an install that enabled the agent half turns it on too.
@@ -210,7 +217,7 @@ export async function runPluginInstall(plan: InstallPlan, deps: InstallDeps): Pr
   }
 
   if (components.desktop) {
-    await installDesktopHalf(plan, components, deps.copy, report, agentResult)
+    await installDesktopHalf(plan, components, deps, report, agentResult)
   }
 
   await loadAgentPlugins(deps.requestGateway, plan.profile)

@@ -1781,6 +1781,31 @@ def _plugins_inspect(rid, params):
     return _ok(rid, inspect(ident, catalog_name=catalog_name or None))
 
 
+def _plugins_install_desktop(rid, params):
+    """Install a repository's desktop half onto this host (``desktop-plugins/<name>``) — what Electron's
+    ``installDesktopPlugin`` does, for a browser-hosted client with no disk of its own. Held to the
+    commit the inspection read; the folder lands optionally enabled because the loader picks it up on
+    its next scan."""
+    ident = (params.get("identifier") or params.get("repo") or "").strip()
+    catalog_name = str(params.get("catalog_name") or "").strip()
+    if not ident and not catalog_name:
+        return _err(rid, 4019, "plugins.manage install_desktop requires 'identifier', 'repo', or 'catalog_name'")
+    result = _tools_mod("hermes_cli.desktop_plugin_install").install_desktop_plugin(
+        ident, catalog_name=catalog_name or None, force=bool(params.get("force")))
+    return _ok(rid, result) if result.get("ok") else _err(rid, 5026, result.get("error") or "desktop install failed")
+
+
+def _plugins_remove_desktop(rid, params):
+    """Delete one installed desktop plugin folder from this host. The desktop half of a package is
+    refused: that package's own removal takes it away."""
+    name = (params.get("name") or params.get("key") or "").strip()
+    if not name:
+        return _err(rid, 4019, "plugins.manage remove_desktop requires a 'name'")
+    result = _tools_mod("hermes_cli.desktop_plugin_install").remove_desktop_plugin(
+        name, force=bool(params.get("force")))
+    return _ok(rid, result) if result.get("ok") else _err(rid, 5026, result.get("error") or "desktop remove failed")
+
+
 def _plugins_update(rid, params):
     """The same update as the dashboard and ``hermes plugins update``: a catalog install re-pins to the
     current catalog SHA, a git install pulls. Every update is scanned. A refusal changes nothing and
@@ -1870,6 +1895,7 @@ def _plugins_presence(rid, params):
 
 _PLUGINS_ACTIONS = {"list": _plugins_list, "onboarding": _plugins_onboarding, "presence": _plugins_presence,
                     "toggle": _plugins_toggle, "install": _plugins_install, "inspect": _plugins_inspect,
+                    "install_desktop": _plugins_install_desktop, "remove_desktop": _plugins_remove_desktop,
                     "update": _plugins_update, "remove": _plugins_remove, "settings": _plugins_settings}
 
 

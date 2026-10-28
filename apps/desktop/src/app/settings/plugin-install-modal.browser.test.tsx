@@ -179,3 +179,99 @@ describe('Plugin install in the browser-hosted app (no window.hermesDesktop)', (
     expect(callsFor('install')).toHaveLength(0)
   })
 })
+
+// The browser-hosted app WITH a backend that can install a desktop half (`plugins.manage
+// install_desktop`, new in this change): the host serving the tab clones the plugin into the folder
+// the Webapp already loads, so a desktop package is installable from the dialog instead of refused.
+describe('Plugin install in the browser-hosted app with a backend that installs desktop halves', () => {
+  beforeEach(() => {
+    window.document.documentElement.dataset.hermesDesktopHost = 'browser'
+  })
+  afterEach(() => {
+    delete window.document.documentElement.dataset.hermesDesktopHost
+  })
+
+  const desktopBackend = (inspection: unknown, desktop: unknown, install: unknown = { ok: true, plugin_name: 'pkg' }) =>
+    requestGateway.mockImplementation(async (method, params) => {
+      if (method !== 'plugins.manage') {
+        return { plugins: [] }
+      }
+
+      if (params?.action === 'inspect') {
+        return inspection
+      }
+
+      if (params?.action === 'install_desktop') {
+        return desktop
+      }
+
+      return params?.action === 'install' ? install : { plugins: [] }
+    })
+
+  it('installs a desktop-only package on the host through the backend', async () => {
+    desktopBackend({ ok: true, agent: false, desktop: true, desktop_name: 'ui', warnings: [] },
+      { ok: true, plugin_name: 'ui', paired_with_agent: false })
+
+    renderModal()
+    act(() => openPluginInstallRequest({ repo: 'https://github.com/example/ui' }))
+
+    await waitFor(() => expect(installButton()?.disabled).toBe(false))
+    expect(screen.queryByText('This package has nothing to install here.')).toBeNull()
+    fireEvent.click(installButton()!)
+
+    await waitFor(() => expect(callsFor('install_desktop')).toHaveLength(1))
+    expect(callsFor('install_desktop')[0][1]).toMatchObject({
+      action: 'install_desktop',
+      identifier: 'https://github.com/example/ui',
+      force: false
+    })
+    // No agent half exists in this repository: nothing is installed into the plugins folder.
+    expect(callsFor('install')).toHaveLength(0)
+    await waitFor(() => expect($notifications.get().some(n => n.message === 'Desktop plugin ui installed')).toBe(true))
+    await waitFor(() => expect($pluginInstallRequest.get()).toBeNull())
+  })
+
+  it('installs both halves of a mixed package', async () => {
+    desktopBackend({ ok: true, agent: true, agent_name: 'pkg', desktop: true, desktop_name: 'pkg', warnings: [] },
+      { ok: true, plugin_name: 'pkg', paired_with_agent: true },
+      { ok: true, plugin_name: 'pkg', enabled: true })
+
+    renderModal()
+    act(() => openPluginInstallRequest({ repo: 'https://github.com/example/pkg' }))
+
+    await waitFor(() => expect(installButton()?.disabled).toBe(false))
+    fireEvent.click(installButton()!)
+
+    await waitFor(() => expect(callsFor('install')).toHaveLength(1))
+    await waitFor(() => expect(callsFor('install_desktop')).toHaveLength(1))
+    await waitFor(() => expect($notifications.get().some(n => n.message === 'Desktop plugin pkg installed')).toBe(true))
+    expect($notifications.get().some(n => n.message === DESKTOP_UNAVAILABLE)).toBe(false)
+  })
+
+  it('says the install is unavailable when the backend predates the action', async () => {
+    requestGateway.mockImplementation(async (method, params) => {
+      if (method !== 'plugins.manage') {
+        return { plugins: [] }
+      }
+
+      if (params?.action === 'inspect') {
+        return { ok: true, agent: false, desktop: true, desktop_name: 'ui', warnings: [] }
+      }
+
+      if (params?.action === 'install_desktop') {
+        throw new JsonRpcGatewayError('unknown plugins action: install_desktop', { code: 4017 })
+      }
+
+      return { plugins: [] }
+    })
+
+    renderModal()
+    act(() => openPluginInstallRequest({ repo: 'https://github.com/example/ui' }))
+
+    await waitFor(() => expect(installButton()?.disabled).toBe(false))
+    fireEvent.click(installButton()!)
+
+    await waitFor(() => expect(screen.findByText(DESKTOP_UNAVAILABLE)).toBeTruthy())
+    expect(callsFor('install')).toHaveLength(0)
+  })
+})

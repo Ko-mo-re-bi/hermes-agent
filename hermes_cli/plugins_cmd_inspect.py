@@ -140,6 +140,15 @@ def inspect_plugin_source(identifier: str, *, catalog_name: Optional[str] = None
     return _copy(result)
 
 
+def forget_inspection(identifier: str, *, catalog_name: Optional[str] = None) -> None:
+    """Drop any cached answer for this source, so the next inspection clones afresh. A forced reinstall
+    must not install the tree a ten-minute-old check named: the point of forcing it is that the
+    repository moved."""
+    from hermes_constants import get_hermes_home
+    with _inspections_lock:
+        _inspections.pop((str(get_hermes_home()), catalog_name or "", identifier), None)
+
+
 def _copy(result: dict[str, Any]) -> dict[str, Any]:
     """Each caller gets its own answer: one shared by joined requests must not be edited through another."""
     return {**result, "warnings": list(result["warnings"])}
