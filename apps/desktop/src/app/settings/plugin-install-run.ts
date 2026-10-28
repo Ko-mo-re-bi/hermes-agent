@@ -173,6 +173,31 @@ async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, repor
   await discoverRuntimePlugins()
 }
 
+/** Whether the app's desktop-plugins root holds `<name>/plugin.js` after a reconcile: a pass that copied
+ *  it names the folder; one that found it already current touches nothing, so the folder is read. A
+ *  reconcile that put nothing down (no entry the host recognises, a refused tree) must not read as
+ *  installed. */
+async function desktopHalfLanded(name: string, touched: readonly string[]): Promise<boolean> {
+  if (touched.some(folder => folder.split(/[\\/]/).pop() === name)) {
+    return true
+  }
+
+  const desktop = window.hermesDesktop
+
+  if (!desktop?.desktopPluginsRoot || !desktop.readDir) {
+    return false
+  }
+
+  try {
+    const root = await desktop.desktopPluginsRoot()
+    const folder = (await desktop.readDir(root)).entries.find(entry => entry.isDirectory && entry.name === name)
+
+    return Boolean(folder && (await desktop.readDir(folder.path)).entries.some(entry => entry.name === 'plugin.js'))
+  } catch {
+    return false
+  }
+}
+
 async function installDesktopHalf(
   plan: InstallPlan,
   components: InstallComponents,
@@ -186,9 +211,13 @@ async function installDesktopHalf(
     // answers "already exists" without Force, and cloning would land desktop-plugins/<git-name>/ beside
     // the package copy (#100412).
     const touched = (await window.hermesDesktop?.reconcileDesktopPlugins?.()) ?? []
+    const name = agentResult?.pluginName ?? plan.probe.agentName ?? plan.request.repo
 
-    if (agentResult?.ok || touched.length > 0) {
-      report.successes.push(deps.copy.desktopSuccess(plan.probe.agentName ?? plan.request.repo))
+    if (await desktopHalfLanded(name, touched)) {
+      report.successes.push(deps.copy.desktopSuccess(name))
+    } else if (agentResult?.ok) {
+      // The agent half is in, but the host copied no desktop half out of it: never report one installed.
+      report.errors.push(deps.copy.desktopFailed)
     }
 
     if (touched.length > 0) {

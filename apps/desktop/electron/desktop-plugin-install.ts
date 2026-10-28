@@ -13,6 +13,7 @@ import path from 'node:path'
 import { parse as parseYaml } from 'yaml'
 
 import {
+  desktopHalfSource,
   PACKAGE_MARKER,
   publishDesktopTree,
   withDesktopPluginsRoot,
@@ -185,20 +186,16 @@ async function pathIsFile(filePath: string): Promise<boolean> {
   }
 }
 
+/** The desktop entry by the one rule the reconcile applies to an installed package too
+ *  (`desktopHalfSource`): a root `plugin.js` wins over `desktop/plugin.js`. */
 export function findDesktopEntry(pluginRoot: string): { entryFile: string; sourceSubdir: string } | null {
-  const rootPlugin = path.join(pluginRoot, 'plugin.js')
+  const sourceDir = desktopHalfSource(pluginRoot)
 
-  if (pathExistsSync(rootPlugin)) {
-    return { entryFile: rootPlugin, sourceSubdir: '.' }
+  if (!sourceDir) {
+    return null
   }
 
-  const nestedPlugin = path.join(pluginRoot, 'desktop', 'plugin.js')
-
-  if (pathExistsSync(nestedPlugin)) {
-    return { entryFile: nestedPlugin, sourceSubdir: 'desktop' }
-  }
-
-  return null
+  return { entryFile: path.join(sourceDir, 'plugin.js'), sourceSubdir: path.relative(pluginRoot, sourceDir) || '.' }
 }
 
 /** Files beside a `plugin.yaml` that the agent side loads: a `register(ctx)` package, or a dashboard

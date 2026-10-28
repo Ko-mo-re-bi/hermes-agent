@@ -14,7 +14,6 @@ the way any other installed plugin does, on the next scan of ``desktop-plugins/`
 
 from __future__ import annotations
 
-import os
 import re
 import tempfile
 from pathlib import Path
@@ -26,8 +25,6 @@ from utils import rmtree_readonly
 
 DESKTOP_PLUGINS_DIR = "desktop-plugins"
 _COMMIT = re.compile(r"[0-9a-f]{40}")
-#: The whole published folder; the loader reads at most a 16 MB ``plugin.js`` from it.
-_TREE_MAX_BYTES = 64 * 1024 * 1024
 
 
 def desktop_plugins_root() -> Path:
@@ -148,20 +145,12 @@ def install_desktop_plugin(identifier: str, *, ref: Optional[str], catalog_name:
 
 
 def _desktop_tree(plugin_root: Path) -> Path:
-    """The folder that is the desktop plugin: the repository root when ``plugin.js`` sits there, else
-    its ``desktop/`` subfolder (Electron's ``findDesktopEntry``, narrowed to those two). It must be a
-    plain tree inside the clone: a link could publish any folder of the host, and the copy is capped."""
-    source = plugin_root if (plugin_root / "plugin.js").is_file() else plugin_root / "desktop"
-    total = 0
-    for folder, dirs, files in os.walk(source):
-        for entry in (Path(folder), *(Path(folder) / n for n in dirs + files)):
-            if entry.is_symlink():
-                raise _pc().PluginOperationError(
-                    f"The desktop plugin contains a link ({entry.relative_to(plugin_root)}); links are not installed.")
-        total += sum((Path(folder) / n).stat().st_size for n in files)
-        if total > _TREE_MAX_BYTES:
-            raise _pc().PluginOperationError(
-                f"The desktop plugin is larger than {_TREE_MAX_BYTES // (1024 * 1024)} MB.")
+    """The folder that is the desktop plugin (:func:`halves.desktop_source`, the rule the host's
+    reconcile applies to an installed package too). It must be a plain tree inside the clone."""
+    source = halves.desktop_source(plugin_root) or plugin_root / "desktop"
+    refused = halves.check_desktop_tree(source, plugin_root)
+    if refused:
+        raise _pc().PluginOperationError(refused)
     return source
 
 
