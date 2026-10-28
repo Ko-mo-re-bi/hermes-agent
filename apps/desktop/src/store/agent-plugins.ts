@@ -286,6 +286,33 @@ const NO_LIVE: AgentPluginLiveNow = { mcpServers: [], skills: [] }
 // giving normal installs time to return their authoritative result.
 const PLUGIN_INSTALL_REQUEST_TIMEOUT_MS = 120_000
 
+interface InstallReply {
+  ok?: boolean
+  plugin_name?: string
+  warnings?: string[]
+  missing_env?: string[]
+  enabled?: boolean
+  activation?: {
+    live_now?: {
+      mcp_servers?: AgentPluginLiveServer[]
+      skills?: { name: string }[]
+    } | null
+    deferred?: Record<string, string[]>
+  } | null
+  error?: string
+}
+
+/** A backend predating `inspected_sha` (native Desktop on an older SSH/URL/Cloud runtime) refuses the
+ *  whole install at admission (`tui_gateway/contracts/registry.py::validate_params`, code 4000, handler
+ *  never ran), so resending without it installs the branch tip exactly as those backends always did.
+ *  Matched on the stable prefix, as `session-create-request.ts` does. Delete once no supported backend
+ *  predates the field. */
+function backendPredatesInspectedSha(params: Record<string, unknown>, error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+
+  return 'inspected_sha' in params && message.includes('invalid params for plugins.manage: inspected_sha:')
+}
+
 export async function installAgentPlugin(
   request: GatewayRequest,
   opts: {
@@ -304,37 +331,32 @@ export async function installAgentPlugin(
     profile?: string | null
   }
 ): Promise<AgentPluginInstallResult> {
+  const params = withProfile(
+    {
+      action: 'install',
+      identifier: opts.identifier,
+      force: Boolean(opts.force),
+      enable: opts.enable ?? true,
+      ...(opts.catalogName ? { catalog_name: opts.catalogName } : {}),
+      ...(opts.ref ? { ref: opts.ref } : {}),
+      ...(!opts.ref && opts.inspectedSha ? { inspected_sha: opts.inspectedSha } : {})
+    },
+    opts.profile
+  )
+
+  const send = (requestParams: Record<string, unknown>) =>
+    request<InstallReply>('plugins.manage', requestParams, PLUGIN_INSTALL_REQUEST_TIMEOUT_MS)
+
   try {
-    const result = await request<{
-      ok?: boolean
-      plugin_name?: string
-      warnings?: string[]
-      missing_env?: string[]
-      enabled?: boolean
-      activation?: {
-        live_now?: {
-          mcp_servers?: AgentPluginLiveServer[]
-          skills?: { name: string }[]
-        } | null
-        deferred?: Record<string, string[]>
-      } | null
-      error?: string
-    }>(
-      'plugins.manage',
-      withProfile(
-        {
-          action: 'install',
-          identifier: opts.identifier,
-          force: Boolean(opts.force),
-          enable: opts.enable ?? true,
-          ...(opts.catalogName ? { catalog_name: opts.catalogName } : {}),
-          ...(opts.ref ? { ref: opts.ref } : {}),
-          ...(!opts.ref && opts.inspectedSha ? { inspected_sha: opts.inspectedSha } : {})
-        },
-        opts.profile
-      ),
-      PLUGIN_INSTALL_REQUEST_TIMEOUT_MS
-    )
+    const result = await send(params).catch((error: unknown) => {
+      if (!backendPredatesInspectedSha(params, error)) {
+        throw error
+      }
+
+      const { inspected_sha: _dropped, ...compatible } = params
+
+      return send(compatible)
+    })
 
     if (!result?.ok) {
       return { ok: false, error: result?.error || 'Install failed', live: NO_LIVE, nextChat: false }

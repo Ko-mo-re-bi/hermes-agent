@@ -61,6 +61,45 @@ describe('installAgentPlugin', () => {
       timedOut: true
     })
   })
+
+  const reviewed = 'e404b6816b20237a82f6fbe2749b5a576cf75dba'
+
+  it('installs on a backend that predates inspected_sha by sending the install without it', async () => {
+    // The admission refusal an origin/main backend gives the field (validate_params, handler never ran).
+    const request = vi.fn(async (_method: string, params: Record<string, unknown>) => {
+      if ('inspected_sha' in params) {
+        throw new JsonRpcGatewayError(
+          'invalid params for plugins.manage: inspected_sha: Extra inputs are not permitted — the client and the ' +
+            'Hermes backend are out of sync (different versions); run `hermes update` and restart both',
+          { code: 4000 }
+        )
+      }
+
+      return { ok: true, plugin_name: 'pkg', enabled: true }
+    })
+
+    expect(
+      await installAgentPlugin(request as never, { identifier: 'https://github.com/example/pkg', inspectedSha: reviewed })
+    ).toMatchObject({ ok: true, pluginName: 'pkg' })
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(request.mock.calls[1][1]).toMatchObject({ action: 'install', identifier: 'https://github.com/example/pkg' })
+    expect(request.mock.calls[1][1]).not.toHaveProperty('inspected_sha')
+  })
+
+  it('holds a current backend to the inspected commit and never resends a refusal of the moved branch', async () => {
+    const request = vi.fn(async () => {
+      throw new JsonRpcGatewayError(
+        'The source changed since you reviewed it: it is now at commit 0a415bc5c1d2, not e404b6816b20.',
+        { code: 5026 }
+      )
+    })
+
+    expect(
+      await installAgentPlugin(request as never, { identifier: 'https://github.com/example/pkg', inspectedSha: reviewed })
+    ).toMatchObject({ ok: false })
+    expect(request).toHaveBeenCalledTimes(1)
+    expect(request.mock.calls[0]).toEqual(['plugins.manage', expect.objectContaining({ inspected_sha: reviewed }), 120_000])
+  })
 })
 
 describe('inspectAgentPlugin', () => {
