@@ -259,6 +259,82 @@ describe('reconcileUnifiedDesktopHalves', () => {
     expect(fs.existsSync(path.join(appRoot, 'radar'))).toBe(false)
   })
 
+  it.skipIf(process.platform === 'win32')(
+    'publishes a real copy of a LINKED root-layout checkout, keeps its marker out of the checkout, and prunes it with the link',
+    async () => {
+      const home = makeHome()
+      const appRoot = path.join(home, 'desktop-plugins')
+      const checkout = path.join(home, 'src', 'radar')
+      write(path.join(checkout, 'plugin.yaml'), 'name: radar')
+      write(path.join(checkout, 'plugin.js'), 'root entry')
+      fs.mkdirSync(path.join(home, 'plugins'), { recursive: true })
+      const link = path.join(home, 'plugins', 'radar')
+      fs.symlinkSync(checkout, link)
+      const target = path.join(appRoot, 'radar')
+
+      expect(await reconcileUnifiedDesktopHalves(home, appRoot)).toEqual([target])
+      expect(fs.lstatSync(target).isSymbolicLink()).toBe(false)
+      expect(fs.readFileSync(path.join(target, 'plugin.js'), 'utf8')).toBe('root entry')
+      expect(JSON.parse(fs.readFileSync(path.join(target, PACKAGE_MARKER), 'utf8'))).toMatchObject({
+        linked: true,
+        package: 'radar',
+        source: link
+      })
+      expect(fs.existsSync(path.join(checkout, PACKAGE_MARKER))).toBe(false)
+      expect(await reconcileUnifiedDesktopHalves(home, appRoot)).toEqual([])
+
+      fs.unlinkSync(link)
+      expect(await reconcileUnifiedDesktopHalves(home, appRoot)).toEqual([target])
+      expect(fs.existsSync(target)).toBe(false)
+      expect(fs.readdirSync(checkout).sort()).toEqual(['plugin.js', 'plugin.yaml'])
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'replaces an earlier copy that kept the checkout link, and drops it once the package link is gone',
+    async () => {
+      // What a pass that copied the link itself left: <appRoot>/radar -> the checkout, marker inside it.
+      const home = makeHome()
+      const appRoot = path.join(home, 'desktop-plugins')
+      const checkout = path.join(home, 'src', 'radar')
+      const link = path.join(home, 'plugins', 'radar')
+      const target = path.join(appRoot, 'radar')
+      write(path.join(checkout, 'plugin.js'), 'root entry')
+      const ghost = { linked: true, package: 'radar', source: link, sourceMtimeMs: Date.now() + 60_000 }
+      write(path.join(checkout, PACKAGE_MARKER), JSON.stringify(ghost))
+      fs.mkdirSync(path.join(home, 'plugins'), { recursive: true })
+      fs.mkdirSync(appRoot, { recursive: true })
+      fs.symlinkSync(checkout, link)
+      fs.symlinkSync(checkout, target)
+
+      expect(await reconcileUnifiedDesktopHalves(home, appRoot)).toEqual([target])
+      expect(fs.lstatSync(target).isSymbolicLink()).toBe(false)
+      expect(fs.readFileSync(path.join(target, 'plugin.js'), 'utf8')).toBe('root entry')
+
+      // The same leftover once the package link is gone: the link in the app root goes, the checkout stays.
+      fs.rmSync(target, { force: true, recursive: true })
+      fs.symlinkSync(checkout, target)
+      fs.unlinkSync(link)
+      expect(await reconcileUnifiedDesktopHalves(home, appRoot)).toEqual([target])
+      expect(fs.existsSync(target)).toBe(false)
+      expect(fs.readFileSync(path.join(checkout, 'plugin.js'), 'utf8')).toBe('root entry')
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')('never stamps a marker into a plugin the user linked into the app root', async () => {
+    const home = makeHome()
+    const appRoot = path.join(home, 'desktop-plugins')
+    const own = path.join(home, 'src', 'pkg')
+    write(path.join(own, 'plugin.js'), 'same')
+    write(path.join(home, 'plugins', 'pkg', 'desktop', 'plugin.js'), 'same')
+    fs.mkdirSync(appRoot, { recursive: true })
+    fs.symlinkSync(own, path.join(appRoot, 'pkg'))
+
+    expect(await reconcileUnifiedDesktopHalves(home, appRoot)).toEqual([])
+    expect(fs.existsSync(path.join(own, PACKAGE_MARKER))).toBe(false)
+    expect(fs.lstatSync(path.join(appRoot, 'pkg')).isSymbolicLink()).toBe(true)
+  })
+
   it('never overwrites a standalone plugin the user installed under the same name', async () => {
     const home = makeHome()
     const appRoot = path.join(home, 'desktop-plugins')

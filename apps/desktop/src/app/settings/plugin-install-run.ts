@@ -173,19 +173,16 @@ async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, repor
   await discoverRuntimePlugins()
 }
 
-/** Whether the app's desktop-plugins root holds `<name>/plugin.js` after a reconcile: a pass that copied
- *  it names the folder; one that found it already current touches nothing, so the folder is read. A
- *  reconcile that put nothing down (no entry the host recognises, a refused tree) must not read as
- *  installed. */
+/** Whether the app's desktop-plugins root holds `<name>/plugin.js` after a reconcile, read from the folder
+ *  itself (Electron's fs bridge, or the host's /api/desktop-plugins on a browser tab). `touched` names
+ *  folders the pass DELETED as well as copied (a force reinstall whose new tree dropped its desktop entry
+ *  prunes the old copy), and one that found the copy current touches nothing. Only a bridge with no
+ *  folder reader falls back to the pass's own list. */
 async function desktopHalfLanded(name: string, touched: readonly string[]): Promise<boolean> {
-  if (touched.some(folder => folder.split(/[\\/]/).pop() === name)) {
-    return true
-  }
-
   const desktop = window.hermesDesktop
 
   if (!desktop?.desktopPluginsRoot || !desktop.readDir) {
-    return false
+    return touched.some(folder => folder.split(/[\\/]/).pop() === name)
   }
 
   try {

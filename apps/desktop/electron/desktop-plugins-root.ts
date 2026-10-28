@@ -333,6 +333,14 @@ export async function materializeDesktopHalf(
   const target = path.join(appRoot, packageName)
   const existing = await readMarker(target)
   const linked = (await fs.promises.lstat(packageDir)).isSymbolicLink()
+  // A link at `<appRoot>/<name>` is never a copy this pass may keep or stamp: a marker-less one is
+  // the user's own linked plugin, and one carrying a marker is an earlier copy of a linked checkout
+  // that kept the link instead of the files, whose marker sits inside that checkout.
+  const targetIsLink = await isLink(target)
+
+  if (targetIsLink && !existing) {
+    return null
+  }
 
   const marker: DesktopHalfMarker = {
     package: packageName,
@@ -374,6 +382,7 @@ export async function materializeDesktopHalf(
     // that lands an older timestamp, and the copy would stay stale silently.
     if (
       existing &&
+      !targetIsLink &&
       existing.source === sourceDir &&
       Boolean(existing.linked) === linked &&
       (linked ? await sameFile(path.join(target, 'plugin.js'), entry) : existing.sourceMtimeMs >= stat.mtimeMs)
@@ -425,13 +434,23 @@ export async function publishDesktopTree(
   const staged = path.join(stagingRoot, name)
 
   try {
-    await fs.promises.cp(sourceDir, staged, { filter, force: true, recursive: true })
+    // From the resolved folder: `cp` keeps a source that is itself a link (a dev checkout linked into
+    // `plugins/`) as a link, so the published "copy" was the checkout and the marker landed in it.
+    await fs.promises.cp(await fs.promises.realpath(sourceDir), staged, { filter, force: true, recursive: true })
     await finalize?.(staged)
     // rename() refuses to replace a non-empty directory, so the old copy goes first.
     await fs.promises.rm(target, { force: true, recursive: true })
     await fs.promises.rename(staged, target)
   } finally {
     await fs.promises.rm(stagingRoot, { force: true, recursive: true })
+  }
+}
+
+async function isLink(target: string): Promise<boolean> {
+  try {
+    return (await fs.promises.lstat(target)).isSymbolicLink()
+  } catch {
+    return false
   }
 }
 
@@ -503,7 +522,9 @@ async function reconcilePass(hermesHome: string, appRoot: string): Promise<strin
     }
   }
 
-  for (const name of await listDirs(appRoot)) {
+  // Links count too: a marker read through one is an earlier copy of a linked checkout that kept the
+  // link, and `rm` drops only the link, never the folder it points at.
+  for (const name of await listDirs(appRoot, true)) {
     const dir = path.join(appRoot, name)
     const marker = await readMarker(dir)
 

@@ -301,6 +301,39 @@ describe('Plugin install in the browser-hosted app with a backend that installs 
     }
   })
 
+  it('never reports a desktop half installed when the host pass only pruned the old copy', async () => {
+    // A force reinstall whose new tree dropped its desktop entry: the host's pass deletes
+    // desktop-plugins/pkg and names it among the folders it touched. Nothing is on disk to load.
+    const reconcileDesktopPlugins = vi.fn(async () => ['/srv/hermes/desktop-plugins/pkg'])
+    const desktopPluginsRoot = vi.fn(async () => '/srv/hermes/desktop-plugins')
+
+    const readDir = vi.fn(async (path: string) => ({
+      entries: path === '/srv/hermes/desktop-plugins' ? [{ name: 'other', path: `${path}/other`, isDirectory: true }] : []
+    }))
+
+    window.hermesDesktop = { desktopPluginsRoot, readDir, reconcileDesktopPlugins } as unknown as Window['hermesDesktop']
+
+    try {
+      desktopBackend(
+        { ok: true, agent: true, agent_name: 'pkg', desktop: true, desktop_name: 'pkg', sha: 'e404b6816b20237a82f6fbe2749b5a576cf75dba', warnings: [] },
+        { ok: true, plugin_name: 'pkg', paired_with_agent: true },
+        { ok: true, plugin_name: 'pkg', enabled: true }
+      )
+
+      renderModal()
+      act(() => openPluginInstallRequest({ repo: 'https://github.com/example/pkg' }))
+
+      await waitFor(() => expect(installButton()?.disabled).toBe(false))
+      fireEvent.click(installButton()!)
+
+      expect(await screen.findByText('Desktop plugin install failed')).toBeTruthy()
+      expect(readDir).toHaveBeenCalledWith('/srv/hermes/desktop-plugins')
+      expect($notifications.get().some(n => n.message === 'Desktop plugin pkg installed')).toBe(false)
+    } finally {
+      delete (window as { hermesDesktop?: unknown }).hermesDesktop
+    }
+  })
+
   it('says the install is unavailable when the backend predates the action', async () => {
     requestGateway.mockImplementation(async (method, params) => {
       if (method !== 'plugins.manage') {

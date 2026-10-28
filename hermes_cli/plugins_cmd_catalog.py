@@ -584,10 +584,21 @@ def _desktop_surface(tree: Path) -> set:
     return {(source / "plugin.js").relative_to(tree).as_posix()} if source else set()
 
 
+# Surfaces that are one thing however they are spelled: the Desktop half is present or not, and moving
+# it between ``plugin.js`` and ``desktop/plugin.js`` grants nothing new.
+_PRESENCE_SURFACES = frozenset({"desktop"})
+
+
+def _added(surface: str, old: set, new: set) -> set:
+    if surface in _PRESENCE_SURFACES:
+        return set() if old else new
+    return new - old
+
+
 def surface_delta(old: dict[str, set], new: dict[str, set]) -> dict[str, list[str]]:
     """``{surface: [added...]}`` for every surface the new tree widens; empty when nothing widened."""
-    return {k: sorted(new.get(k, set()) - old.get(k, set())) for k in _SURFACE_LABELS
-            if new.get(k, set()) - old.get(k, set())}
+    delta = {k: sorted(_added(k, old.get(k, set()), new.get(k, set()))) for k in _SURFACE_LABELS}
+    return {k: v for k, v in delta.items() if v}
 
 
 def surface_delta_lines(delta: dict[str, list[str]]) -> list[str]:

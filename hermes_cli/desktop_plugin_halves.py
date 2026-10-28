@@ -206,6 +206,12 @@ def materialize_desktop_half(package_dir: Path, app_root: Path, name: str) -> Pa
     target = app_root / name
     existing = read_package_marker(target)
     linked = package_dir.is_symlink()
+    # A link at ``<app_root>/<name>`` is never a copy this pass may keep or stamp: a marker-less one is
+    # the user's own linked plugin, and one carrying a marker is an earlier copy of a linked checkout
+    # that kept the link instead of the files (Electron's ``cp`` did), its marker inside the checkout.
+    target_is_link = target.is_symlink()
+    if target_is_link and existing is None:
+        return None
     marker = {
         "package": name,
         "source": str(source_dir),
@@ -224,6 +230,7 @@ def materialize_desktop_half(package_dir: Path, app_root: Path, name: str) -> Pa
             return None
         if (
             existing is not None
+            and not target_is_link
             and existing["source"] == str(source_dir)
             and bool(existing.get("linked")) == linked
             and (
@@ -282,10 +289,15 @@ def reconcile_desktop_halves(hermes_root: Path, app_root: Path) -> list[str]:
                 if result is not None:
                     touched.append(str(result))
 
-        for name in _list_dirs(app_root):
+        # Links count too: a marker read through one is an earlier copy of a linked checkout that kept
+        # the link. Only the link goes, never the folder it points at.
+        for name in _list_dirs(app_root, follow_links=True):
             folder = app_root / name
             marker = read_package_marker(folder)
             if marker and _source_gone(name, Path(marker["source"]) / "plugin.js"):
-                shutil.rmtree(folder, ignore_errors=True)
+                if folder.is_symlink():
+                    folder.unlink(missing_ok=True)
+                else:
+                    shutil.rmtree(folder, ignore_errors=True)
                 touched.append(str(folder))
         return touched
