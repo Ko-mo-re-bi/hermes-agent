@@ -1616,8 +1616,13 @@ class SlackAdapter(BasePlatformAdapter):
         async def _noop(event, body):
             return None
 
+        from plugins.platforms.slack.business_approval import bind
+        business = self._business_approval = bind(self)
+
         def _reaction(removed: bool):
             async def _handler(event, body):
+                if business is not None and await business.reaction(event, body, removed):
+                    return
                 await self._handle_slack_reaction(event, removed=removed)
 
             return _handler
@@ -1827,6 +1832,8 @@ class SlackAdapter(BasePlatformAdapter):
                 self._start_socket_mode_handler()
                 self._running = True
                 self._ensure_socket_watchdog()
+                if getattr(self, "_business_approval", None) is not None:
+                    self._business_approval.start()
             except Exception:
                 self._running = False
                 try:
@@ -1901,6 +1908,8 @@ class SlackAdapter(BasePlatformAdapter):
     async def disconnect(self) -> None:
         """Disconnect from Slack."""
         self._running = False
+        if getattr(self, "_business_approval", None) is not None:
+            await self._business_approval.stop()
         # Seal dangling native streams so no live-typing indicator survives a restart.
         for key, stream in list(self._active_streams.items()):
             await self._seal_stream(key, stream)
