@@ -64,8 +64,9 @@ describe('installAgentPlugin', () => {
 
   const reviewed = 'e404b6816b20237a82f6fbe2749b5a576cf75dba'
 
-  it('installs on a backend that predates inspected_sha by sending the install without it', async () => {
+  it('never resends without the inspected commit on its own when a backend predates inspected_sha', async () => {
     // The admission refusal an origin/main backend gives the field (validate_params, handler never ran).
+    // Installing there without it takes whatever the branch holds now: only the user may choose that.
     const request = vi.fn(async (_method: string, params: Record<string, unknown>) => {
       if ('inspected_sha' in params) {
         throw new JsonRpcGatewayError(
@@ -75,14 +76,23 @@ describe('installAgentPlugin', () => {
         )
       }
 
-      return { ok: true, plugin_name: 'pkg', enabled: true }
+      return { ok: true, plugin_name: 'unreviewed-tip', enabled: true }
     })
 
     expect(
-      await installAgentPlugin(request as never, { identifier: 'https://github.com/example/pkg', inspectedSha: reviewed })
-    ).toMatchObject({ ok: true, pluginName: 'pkg' })
-    expect(request).toHaveBeenCalledTimes(2)
-    expect(request.mock.calls[1][1]).toMatchObject({ action: 'install', identifier: 'https://github.com/example/pkg' })
+      await installAgentPlugin(request as never, {
+        identifier: 'https://github.com/example/pkg',
+        inspectedSha: reviewed,
+        profile: 'research'
+      })
+    ).toMatchObject({ ok: false, inspectedShaUnsupported: true })
+    expect(request).toHaveBeenCalledTimes(1)
+
+    // The user's explicit "Install anyway" is an ordinary legacy install, still on the originating profile.
+    expect(
+      await installAgentPlugin(request as never, { identifier: 'https://github.com/example/pkg', profile: 'research' })
+    ).toMatchObject({ ok: true, pluginName: 'unreviewed-tip' })
+    expect(request.mock.calls[1][1]).toMatchObject({ action: 'install', profile: 'research' })
     expect(request.mock.calls[1][1]).not.toHaveProperty('inspected_sha')
   })
 
@@ -104,8 +114,11 @@ describe('installAgentPlugin', () => {
       })
 
       expect(
-        await installAgentPlugin(request as never, { identifier: 'https://github.com/example/pkg', inspectedSha: reviewed })
-      ).toMatchObject({ ok: false })
+        await installAgentPlugin(request as never, {
+          identifier: 'https://github.com/example/pkg',
+          inspectedSha: reviewed
+        })
+      ).toMatchObject({ ok: false, inspectedShaUnsupported: false })
       expect(request).toHaveBeenCalledTimes(1)
     }
   })
@@ -132,10 +145,17 @@ describe('installAgentPlugin', () => {
     })
 
     expect(
-      await installAgentPlugin(request as never, { identifier: 'https://github.com/example/pkg', inspectedSha: reviewed })
+      await installAgentPlugin(request as never, {
+        identifier: 'https://github.com/example/pkg',
+        inspectedSha: reviewed
+      })
     ).toMatchObject({ ok: false })
     expect(request).toHaveBeenCalledTimes(1)
-    expect(request.mock.calls[0]).toEqual(['plugins.manage', expect.objectContaining({ inspected_sha: reviewed }), 120_000])
+    expect(request.mock.calls[0]).toEqual([
+      'plugins.manage',
+      expect.objectContaining({ inspected_sha: reviewed }),
+      120_000
+    ])
   })
 })
 
@@ -147,11 +167,13 @@ describe('inspectAgentPlugin', () => {
     const sha = 'ABCDEF0123456789abcdef0123456789abcdef01'
     const request = answering(sha)
 
-    expect(await inspectAgentPlugin(request as never, { identifier: 'owner/repo', profile: 'research' })).toMatchObject({
-      ok: true,
-      agentName: 'demo',
-      sha: sha.toLowerCase()
-    })
+    expect(await inspectAgentPlugin(request as never, { identifier: 'owner/repo', profile: 'research' })).toMatchObject(
+      {
+        ok: true,
+        agentName: 'demo',
+        sha: sha.toLowerCase()
+      }
+    )
     expect(request).toHaveBeenCalledWith(
       'plugins.manage',
       { action: 'inspect', identifier: 'owner/repo', profile: 'research' },
@@ -257,7 +279,12 @@ describe('saveAgentPluginSettings (#46600, #87934)', () => {
       writeSecret: vi.fn(async () => ({ ok: true }))
     })
 
-    expect(request).toHaveBeenCalledWith('plugins.manage', { action: 'settings', key: 'demo', profile: 'workbot', values: {} })
+    expect(request).toHaveBeenCalledWith('plugins.manage', {
+      action: 'settings',
+      key: 'demo',
+      profile: 'workbot',
+      values: {}
+    })
     expect(JSON.stringify(request.mock.calls)).not.toContain('sk-2')
   })
 

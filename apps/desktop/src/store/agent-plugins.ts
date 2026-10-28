@@ -254,6 +254,9 @@ export interface AgentPluginInstallResult {
   timedOut?: boolean
   /** Refused: the source moved off the reviewed commit (`isSourceMovedRefusal`). */
   sourceMoved?: boolean
+  /** Refused at admission by a backend that predates `inspected_sha`: nothing was installed, and an install
+   *  there cannot be held to the reviewed commit. Only the user may choose to install without it. */
+  inspectedShaUnsupported?: boolean
   pluginName?: string
   warnings?: string[]
   missingEnv?: string[]
@@ -308,11 +311,11 @@ interface InstallReply {
 const INSPECTED_SHA_ADMISSION_REFUSAL = 'invalid params for plugins.manage: inspected_sha: '
 
 /** A backend predating `inspected_sha` (native Desktop on an older SSH/URL/Cloud runtime) refuses the
- *  whole install at admission (code 4000, handler never ran), so resending without it installs the branch
- *  tip exactly as those backends always did. Only that refusal qualifies: the code AND a message that
- *  OPENS with the admission prefix. Any other error (a 5026 install failure echoing a git server's text
- *  included) is never retried, or a hostile clone error could drop the reviewed commit. Delete once no
- *  supported backend predates the field. */
+ *  whole install at admission (code 4000, handler never ran). Installing there without the field takes
+ *  whatever the source holds at that moment, so the dialog asks the user first; nothing resends on its
+ *  own. Only that refusal qualifies: the code AND a message that OPENS with the admission prefix. Any
+ *  other error (a 5026 install failure echoing a git server's text included) is an ordinary failure.
+ *  Delete once no supported backend predates the field. */
 function backendPredatesInspectedSha(params: Record<string, unknown>, error: unknown): boolean {
   return (
     'inspected_sha' in params &&
@@ -361,19 +364,8 @@ export async function installAgentPlugin(
     opts.profile
   )
 
-  const send = (requestParams: Record<string, unknown>) =>
-    request<InstallReply>('plugins.manage', requestParams, PLUGIN_INSTALL_REQUEST_TIMEOUT_MS)
-
   try {
-    const result = await send(params).catch((error: unknown) => {
-      if (!backendPredatesInspectedSha(params, error)) {
-        throw error
-      }
-
-      const { inspected_sha: _dropped, ...compatible } = params
-
-      return send(compatible)
-    })
+    const result = await request<InstallReply>('plugins.manage', params, PLUGIN_INSTALL_REQUEST_TIMEOUT_MS)
 
     if (!result?.ok) {
       return { ok: false, error: result?.error || 'Install failed', live: NO_LIVE, nextChat: false }
@@ -402,6 +394,7 @@ export async function installAgentPlugin(
       ok: false,
       timedOut: /^request timed out after \d+s: plugins\.manage$/.test(message),
       sourceMoved: isSourceMovedRefusal(e),
+      inspectedShaUnsupported: backendPredatesInspectedSha(params, e),
       error: message,
       live: NO_LIVE,
       nextChat: false
@@ -421,6 +414,8 @@ export interface AgentPluginInspection {
   insecure?: boolean
   /** The commit the backend read; absent when it reported none or not a full SHA. */
   sha?: string
+  /** Read at the catalog entry's pin, as a catalog install checks it out: `sha` is what that install must be. */
+  catalogPin?: boolean
   unavailable?: boolean
   error?: string
 }
@@ -473,7 +468,10 @@ export async function inspectAgentPlugin(
       desktopName: result?.desktop_name ?? null,
       warnings: result?.warnings ?? [],
       insecure: Boolean(result?.insecure),
-      ...(ok && typeof result.sha === 'string' && COMMIT_SHA_RE.test(result.sha) ? { sha: result.sha.toLowerCase() } : {}),
+      ...(ok && typeof result.sha === 'string' && COMMIT_SHA_RE.test(result.sha)
+        ? { sha: result.sha.toLowerCase() }
+        : {}),
+      ...(ok && opts.catalogName ? { catalogPin: true } : {}),
       ...(ok ? {} : { error: result?.error || 'Inspection failed' })
     }
   } catch (e) {

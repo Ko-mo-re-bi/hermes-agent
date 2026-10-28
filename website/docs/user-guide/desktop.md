@@ -729,7 +729,12 @@ plugin is installed once, as an agent plugin on that host, and the host copies i
 that checkout, as native Desktop does with a local backend. That install is held to the commit the
 dialog showed too: if the branch moved after you reviewed it, nothing is installed and the dialog
 reads the source again and shows the new commit for you to review before you click Install again
-(native Desktop works the same way). Because a browser tab asks for it, the
+(native Desktop works the same way). A catalog pick is held to the catalog pin the dialog showed: if the
+catalog re-pins the entry before you click Install, the dialog shows the new pin for review first. A
+backend older than the app cannot hold an install to the reviewed commit; the dialog says so and installs
+only if you choose **Install anyway**. If a package's agent half installs but its desktop half cannot
+follow because the source moved, the dialog says only the agent half is in, and installs again only with
+**Force reinstall**, which replaces both halves with the version shown. Because a browser tab asks for it, the
 desktop-only clone takes `https://`
 repositories only (no `http://`, `ssh`/`git@` or `file://` sources), refuses a plugin folder that
 contains symbolic links or is larger than 64 MB, and never replaces an installed plugin unless

@@ -69,6 +69,8 @@ export interface InstallPlan {
   force: boolean
   ref?: string
   remote: boolean
+  /** The user chose "Install anyway" on a backend that cannot hold the agent half to the reviewed commit. */
+  withoutReviewedCommit?: boolean
 }
 
 export interface InstallDeps {
@@ -78,11 +80,16 @@ export interface InstallDeps {
 }
 
 /** `stale`: a half was refused because the source left the commit the dialog showed. Retrying would resend
- *  that commit and fail forever, so the dialog reads the source again and shows the new commit first. */
+ *  that commit and fail forever, so the dialog reads the source again and shows the new commit first.
+ *  `partial`: the agent half installed at the reviewed commit, then the desktop half was refused because the
+ *  source left it; only a replacement of both halves may follow. `needsConfirm`: the backend cannot hold the
+ *  install to the reviewed commit and installed nothing; the user decides whether to install anyway. */
 export type InstallOutcome =
   | { error: string; status: 'failed' }
+  | { error: string; status: 'partial' }
   | { error: string; status: 'stale' }
   | { status: 'done' }
+  | { status: 'needsConfirm' }
   | { status: 'uncertain' }
 
 interface Report {
@@ -123,6 +130,15 @@ function notifyAgentFollowUps(result: AgentPluginInstallResult, name: string, de
   }
 }
 
+/** The commit the dialog showed, which both halves are held to: a branch that moved, or a catalog entry
+ *  re-pinned, since must not install a tree nobody reviewed. A catalog pick shows its reviewed pin
+ *  (`request.sha`), unless the backend read the entry at that pin (`probe.catalogPin`: the browser-hosted
+ *  app), whose commit a re-inspection re-reads. Electron's probe reads the branch tip, which a catalog
+ *  install never checks out. */
+export function reviewedCommit({ probe, request }: Pick<InstallPlan, 'probe' | 'request'>): string | undefined {
+  return !request.catalogName || probe.catalogPin ? probe.sha : request.sha
+}
+
 async function installAgentHalf(plan: InstallPlan, deps: InstallDeps, report: Report) {
   const { request } = plan
 
@@ -132,9 +148,7 @@ async function installAgentHalf(plan: InstallPlan, deps: InstallDeps, report: Re
     enable: plan.enable,
     catalogName: request.catalogName,
     ref: plan.ref,
-    // The commit the dialog showed: a branch that moved since must not install a tree nobody reviewed.
-    // A catalog pick installs at the catalog's own pin.
-    inspectedSha: request.catalogName ? undefined : plan.probe.sha,
+    inspectedSha: plan.withoutReviewedCommit ? undefined : reviewedCommit(plan),
     profile: plan.profile
   })
 
@@ -155,7 +169,12 @@ async function installAgentHalf(plan: InstallPlan, deps: InstallDeps, report: Re
   return result
 }
 
-async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, report: Report, deps: InstallDeps): Promise<void> {
+async function cloneDesktopHalf(
+  plan: InstallPlan,
+  copy: InstallModalCopy,
+  report: Report,
+  deps: InstallDeps
+): Promise<void> {
   // Native Desktop clones it in Electron; a browser-hosted tab asks the host that serves it, and the
   // plugin lands in the folder this Webapp already loads. A tab installing a package's agent half never
   // clones the desktop half here: the host copies it out of that one checkout (`desktopHalfFromPackage`).
@@ -163,16 +182,16 @@ async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, repor
 
   const result: { error?: string; ok: boolean; pluginName?: string; sourceMoved?: boolean; unsupported?: boolean } =
     installFn
-    ? await installFn({ identifier: plan.request.repo, force: plan.force, sha: plan.ref ?? plan.probe.sha })
-    : await installDesktopPluginHalf(deps.requestGateway, {
-        identifier: plan.request.repo,
-        catalogName: plan.request.catalogName,
-        force: plan.force,
-        profile: plan.profile,
-        // The pin the user typed, else the commit the dialog showed: the host installs exactly that tree
-        // or refuses.
-        ref: plan.ref ?? plan.probe.sha
-      })
+      ? await installFn({ identifier: plan.request.repo, force: plan.force, sha: plan.ref ?? reviewedCommit(plan) })
+      : await installDesktopPluginHalf(deps.requestGateway, {
+          identifier: plan.request.repo,
+          catalogName: plan.request.catalogName,
+          force: plan.force,
+          profile: plan.profile,
+          // The pin the user typed, else the commit the dialog showed: the host installs exactly that tree
+          // or refuses.
+          ref: plan.ref ?? reviewedCommit(plan)
+        })
 
   if (!result.ok) {
     // A backend older than this build has no place to put the half: say what this environment can do,
@@ -245,6 +264,42 @@ async function installDesktopHalf(
   }
 }
 
+/** An agent-half answer after which nothing else may install. A client timeout is `uncertain`: the backend
+ *  may still be installing. A refusal because the source moved means nothing from that review installs, not
+ *  the other half either. An older backend refusing the reviewed commit at admission installed nothing:
+ *  the user decides. */
+function agentStopsInstall(
+  result: AgentPluginInstallResult,
+  plan: InstallPlan,
+  deps: InstallDeps,
+  report: Report
+): InstallOutcome | null {
+  if (result.timedOut) {
+    void loadAgentPlugins(deps.requestGateway, plan.profile)
+
+    return { status: 'uncertain' }
+  }
+
+  if (result.sourceMoved) {
+    return { status: 'stale', error: report.errors.join(' ') }
+  }
+
+  return result.inspectedShaUnsupported ? { status: 'needsConfirm' } : null
+}
+
+/** The outcome of an install that reported errors. The agent half in at the reviewed commit while the desktop
+ *  half could not follow it is `partial`: a fresh review would lead the next Install to put the desktop half
+ *  down at another commit beside it. */
+function failedOutcome(plan: InstallPlan, deps: InstallDeps, report: Report, agentInstalled: boolean): InstallOutcome {
+  if (agentInstalled && report.sourceMoved) {
+    const sha = plan.withoutReviewedCommit ? '' : (reviewedCommit(plan)?.slice(0, 12) ?? '')
+
+    return { status: 'partial', error: deps.copy.partialInstall(sha) }
+  }
+
+  return { status: report.sourceMoved ? 'stale' : 'failed', error: report.errors.join(' ') }
+}
+
 /** Install every half `installComponents` picks, then refresh the inventory. A client timeout on the agent
  *  half is `uncertain`: the backend may still be installing, so nothing else starts. */
 export async function runPluginInstall(plan: InstallPlan, deps: InstallDeps): Promise<InstallOutcome> {
@@ -256,16 +311,10 @@ export async function runPluginInstall(plan: InstallPlan, deps: InstallDeps): Pr
 
   const report: Report = { errors: [], successes: [], sourceMoved: false }
   const agentResult = components.agent ? await installAgentHalf(plan, deps, report) : undefined
+  const stopped = agentResult && agentStopsInstall(agentResult, plan, deps, report)
 
-  if (agentResult?.timedOut) {
-    void loadAgentPlugins(deps.requestGateway, plan.profile)
-
-    return { status: 'uncertain' }
-  }
-
-  // Nothing from a review the source has moved past is installed: not the other half either.
-  if (agentResult?.sourceMoved) {
-    return { status: 'stale', error: report.errors.join(' ') }
+  if (stopped) {
+    return stopped
   }
 
   if (components.desktop) {
@@ -283,7 +332,7 @@ export async function runPluginInstall(plan: InstallPlan, deps: InstallDeps): Pr
   }
 
   if (report.errors.length > 0) {
-    return { status: report.sourceMoved ? 'stale' : 'failed', error: report.errors.join(' ') }
+    return failedOutcome(plan, deps, report, Boolean(agentResult?.ok))
   }
 
   // Open chats of the profile already have the plugin's MCP tools and skills; say which servers did not connect.

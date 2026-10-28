@@ -380,8 +380,8 @@ async function cloneToTemp(gitBin: string, gitUrl: string, subdir: string | null
 
 const COMMIT_SHA = /^[0-9a-f]{40}$/
 
-async function headSha(gitBin: string, cloneRoot: string): Promise<string> {
-  const { code, stdout, stderr } = await execGit(gitBin, ['rev-parse', 'HEAD'], {
+async function headSha(gitBin: string, cloneRoot: string, revision = 'HEAD'): Promise<string> {
+  const { code, stdout, stderr } = await execGit(gitBin, ['rev-parse', revision], {
     cwd: cloneRoot,
     env: noninteractiveGitEnv(),
     timeoutMs: GIT_TIMEOUT_MS
@@ -409,7 +409,8 @@ async function checkoutReviewedCommit(gitBin: string, cloneRoot: string, sha: st
       await runGitOrThrow(gitBin, ['checkout', '--detach', reviewed], cloneRoot)
     }
 
-    if ((await headSha(gitBin, cloneRoot)) !== reviewed) {
+    // A catalog pin may name an annotated tag: HEAD is the commit it peels to.
+    if ((await headSha(gitBin, cloneRoot)) !== (await headSha(gitBin, cloneRoot, `${reviewed}^{commit}`))) {
       throw new Error(`HEAD is not ${reviewed}.`)
     }
   } catch (err) {

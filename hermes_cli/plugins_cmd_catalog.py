@@ -307,10 +307,12 @@ def refuse_incompatible_catalog_entry(entry: PluginCatalogEntry) -> None:
 
 def install_catalog_entry(entry: PluginCatalogEntry, *, force: bool, ref: Optional[str] = None,
                           allow_removed: bool = False, scan_decision_cb=None, python_deps: bool = True,
-                          assume_deps_consent: bool = False, before_swap=None) -> tuple:
+                          assume_deps_consent: bool = False, before_swap=None,
+                          inspected_sha: Optional[str] = None) -> tuple:
     """``_install_plugin_core`` at the catalog pin (an explicit *ref* wins) + provenance recorded on the
     install-metadata record at the sha ACTUALLY checked out (a ``--ref`` install is not at the reviewed
-    pin, so ``update_available`` must say so). Returns the core's ``(target, manifest, installed_name)``."""
+    pin, so ``update_available`` must say so). *inspected_sha*: the commit an install dialog showed; the
+    checkout must be that commit. Returns the core's ``(target, manifest, installed_name)``."""
     from hermes_cli.plugins_cmd import _install_plugin_core
     if not allow_removed:
         raise_if_removed(entry.name, entry.repo)
@@ -319,7 +321,8 @@ def install_catalog_entry(entry: PluginCatalogEntry, *, force: bool, ref: Option
         entry.install_identifier, force=force, ref=ref or entry.sha, scan_decision_cb=scan_decision_cb,
         reviewed_pin=entry.sha, python_deps=python_deps, assume_deps_consent=assume_deps_consent,
         allow_removed=allow_removed, before_swap=before_swap, app_title=entry.title or None,
-        catalog={"name": entry.name, "repo": entry.repo, "tier": entry.tier, "pin": entry.sha})
+        catalog={"name": entry.name, "repo": entry.repo, "tier": entry.tier, "pin": entry.sha},
+        inspected_sha=inspected_sha)
     return target, manifest, installed_name
 
 

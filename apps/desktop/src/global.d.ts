@@ -658,6 +658,8 @@ declare global {
         insecure?: boolean
         /** The commit that was inspected; an install of this source is held to it. */
         sha?: string
+        /** The backend read the catalog entry at its pin (`inspectAgentPlugin`); never set by Electron's probe. */
+        catalogPin?: boolean
         /** Inspection itself is missing here (not a failed read): Retry cannot help. */
         unavailable?: boolean
         error?: string
@@ -776,8 +778,7 @@ export interface HermesPluginFolderGrant {
 }
 
 export type HermesPluginFilesResult<T extends object = Record<string, unknown>> =
-  | ({ ok: true } & T)
-  | { ok: false; error: string; message: string }
+  ({ ok: true } & T) | { ok: false; error: string; message: string }
 
 export interface DesktopMarketplaceSearchItem {
   extensionId: string
