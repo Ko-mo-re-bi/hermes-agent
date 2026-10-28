@@ -1783,15 +1783,14 @@ def _plugins_inspect(rid, params):
 
 def _plugins_install_desktop(rid, params):
     """Install a repository's desktop half onto this host (``desktop-plugins/<name>``) — what Electron's
-    ``installDesktopPlugin`` does, for a browser-hosted client with no disk of its own. Held to the
-    commit the inspection read; the folder lands optionally enabled because the loader picks it up on
-    its next scan."""
+    ``installDesktopPlugin`` does, for a browser-hosted client with no disk of its own. ``ref`` is the
+    commit the install dialog reviewed; the loader picks the folder up on its next scan."""
     ident = (params.get("identifier") or params.get("repo") or "").strip()
     catalog_name = str(params.get("catalog_name") or "").strip()
     if not ident and not catalog_name:
         return _err(rid, 4019, "plugins.manage install_desktop requires 'identifier', 'repo', or 'catalog_name'")
     result = _tools_mod("hermes_cli.desktop_plugin_install").install_desktop_plugin(
-        ident, catalog_name=catalog_name or None, force=bool(params.get("force")))
+        ident, ref=params.get("ref"), catalog_name=catalog_name or None, force=bool(params.get("force")))
     return _ok(rid, result) if result.get("ok") else _err(rid, 5026, result.get("error") or "desktop install failed")
 
 

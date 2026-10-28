@@ -69,7 +69,7 @@ def _package_origin(package_dir: Path) -> dict:
     return {"repo": match.group(1)} if match else {}
 
 
-def _mtime_ms(st: os.stat_result) -> float:
+def mtime_ms(st: os.stat_result) -> float:
     """``Stats.mtimeMs`` exactly as Node computes it (seconds * 1e3 + nanoseconds / 1e6). Both
     writers compare this number against the marker the other may have written, so a value one ulp
     off would make each pass see the other's copy as stale and re-copy it."""
@@ -77,7 +77,7 @@ def _mtime_ms(st: os.stat_result) -> float:
     return seconds * 1e3 + nanoseconds / 1e6
 
 
-def _read_marker(folder: Path) -> dict | None:
+def read_package_marker(folder: Path) -> dict | None:
     try:
         marker = json.loads((folder / PACKAGE_MARKER).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
@@ -104,7 +104,7 @@ def _same_file(a: Path, b: Path) -> bool:
         return False
 
 
-def _publish(source_dir: Path, target: Path, marker: dict | None) -> None:
+def publish_desktop_tree(source_dir: Path, target: Path, marker: dict | None) -> None:
     """Copy through a staging sibling and rename the finished tree into place, marker included, so a
     failure leaves the old folder or none: never a partial, marker-less one that a later pass would
     take for a hand install. A standalone plugin is published with no marker (``None``): one would
@@ -114,7 +114,11 @@ def _publish(source_dir: Path, target: Path, marker: dict | None) -> None:
     staged = staging / target.name
     try:
         shutil.copytree(source_dir, staged, symlinks=True)
-        if marker is not None:
+        if marker is None:
+            # Only an installer writes the marker: one shipped in the repository would claim
+            # another package's agent half (Electron's ``installDesktopPluginFromGit`` drops it too).
+            (staged / PACKAGE_MARKER).unlink(missing_ok=True)
+        else:
             _write_marker(staged, marker)
         if target.is_symlink():
             target.unlink()
@@ -123,23 +127,6 @@ def _publish(source_dir: Path, target: Path, marker: dict | None) -> None:
         os.rename(staged, target)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
-
-
-def publish_desktop_tree(source_dir: Path, target: Path, marker: dict | None) -> None:
-    """Publish a desktop plugin folder into the app root: staged copy, optional package marker, atomic
-    rename. The caller holds :data:`ROOT_WRITER` around its existence check and this call, so a
-    concurrent reconcile pass cannot copy the same folder underneath it."""
-    _publish(source_dir, target, marker)
-
-
-def read_package_marker(folder: Path) -> dict | None:
-    """The package marker on an installed folder, if it is one this root's writers put down."""
-    return _read_marker(folder)
-
-
-def mtime_ms(st: os.stat_result) -> float:
-    """``Stats.mtimeMs`` as Node computes it, for markers written outside :func:`materialize_desktop_half`."""
-    return _mtime_ms(st)
 
 
 def materialize_desktop_half(package_dir: Path, app_root: Path, name: str) -> Path | None:
@@ -158,12 +145,12 @@ def materialize_desktop_half(package_dir: Path, app_root: Path, name: str) -> Pa
         return None
 
     target = app_root / name
-    existing = _read_marker(target)
+    existing = read_package_marker(target)
     linked = package_dir.is_symlink()
     marker = {
         "package": name,
         "source": str(source_dir),
-        "sourceMtimeMs": _mtime_ms(entry_stat),
+        "sourceMtimeMs": mtime_ms(entry_stat),
         **({"linked": True} if linked else {}),
         **_package_origin(package_dir),
     }
@@ -188,7 +175,7 @@ def materialize_desktop_half(package_dir: Path, app_root: Path, name: str) -> Pa
         ):
             return None
 
-    _publish(source_dir, target, marker)
+    publish_desktop_tree(source_dir, target, marker)
     return target
 
 
@@ -230,7 +217,7 @@ def reconcile_desktop_halves(hermes_root: Path, app_root: Path) -> list[str]:
 
         for name in _list_dirs(app_root):
             folder = app_root / name
-            marker = _read_marker(folder)
+            marker = read_package_marker(folder)
             if marker and _source_gone(name, Path(marker["source"]) / "plugin.js"):
                 shutil.rmtree(folder, ignore_errors=True)
                 touched.append(str(folder))

@@ -450,7 +450,7 @@ export async function inspectAgentPlugin(
  *  already loads. Never rejects. */
 export async function installDesktopPluginHalf(
   request: GatewayRequest,
-  opts: { identifier: string; catalogName?: string; force?: boolean; profile?: string | null }
+  opts: { identifier: string; catalogName?: string; force?: boolean; profile?: string | null; ref?: string }
 ): Promise<{
   ok: boolean
   pairedWithAgent?: boolean
@@ -474,7 +474,8 @@ export async function installDesktopPluginHalf(
           action: 'install_desktop',
           identifier: opts.identifier,
           force: Boolean(opts.force),
-          ...(opts.catalogName ? { catalog_name: opts.catalogName } : {})
+          ...(opts.catalogName ? { catalog_name: opts.catalogName } : {}),
+          ...(opts.ref ? { ref: opts.ref } : {})
         },
         opts.profile
       ),

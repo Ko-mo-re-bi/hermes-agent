@@ -14,6 +14,8 @@ the way any other installed plugin does, on the next scan of ``desktop-plugins/`
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -23,6 +25,9 @@ from hermes_cli import desktop_plugin_halves as halves
 from hermes_constants import get_default_hermes_root
 
 DESKTOP_PLUGINS_DIR = "desktop-plugins"
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+#: The whole published folder; the loader reads at most a 16 MB ``plugin.js`` from it.
+_TREE_MAX_BYTES = 64 * 1024 * 1024
 
 
 def desktop_plugins_root() -> Path:
@@ -53,113 +58,105 @@ def _checked_name(name: Optional[str]) -> str:
             or "/" in candidate or "\\" in candidate or "\0" in candidate
             or any(ord(char) < 32 for char in candidate) or len(candidate) > 128):
         raise _pc().PluginOperationError(
-            f"Cannot install a desktop plugin under the folder name '{name}': "
-            "it must be a plain folder name, not a path."
+            f"'{name}' is not a desktop plugin folder name: it must be a plain folder name, not a path."
         )
     return candidate
 
 
-def _source(identifier: str, catalog_name: Optional[str]) -> tuple[str, Optional[str], str, Optional[str]]:
-    """``(git_url, subdir, resolved_identifier, revision)`` — the installer's own resolution, with the
-    catalog's reviewed pin when *catalog_name* is given (its repository replaces *identifier*)."""
+def _https_source(identifier: str, catalog_name: Optional[str]) -> tuple[str, Optional[str], Optional[str]]:
+    """``(git_url, subdir, catalog_sha)`` through the installer's own resolution and kill list, with the
+    catalog's reviewed pin when *catalog_name* is given (its repository replaces *identifier*).
+
+    A browser tab asks for this clone, so it is https only: ``file://`` would copy any folder of the
+    host, ``ssh``/``git@`` would spend the host's keys, and ``http://`` can be rewritten in transit.
+    Native Desktop's install keeps those for a user at their own machine."""
     pc = _pc()
-    resolved = identifier
     revision = None
     if catalog_name:
         from hermes_cli import plugins_cmd_catalog as catalog
         entry = catalog.get_live_catalog_entry(catalog_name)
         if entry is None:
             raise pc.PluginOperationError(f"'{catalog_name}' is not in the Hermes plugin catalog.")
-        resolved = entry.install_identifier
-        revision = entry.sha or None
-    git_url, subdir = pc._resolve_git_url(resolved)
+        identifier, revision = entry.install_identifier, entry.sha or None
+    try:
+        git_url, subdir = pc._resolve_git_url(identifier)
+    except ValueError as exc:
+        raise pc.PluginOperationError(str(exc)) from exc
+    if not git_url.startswith("https://"):
+        raise pc.PluginOperationError("A desktop plugin is installed from the Webapp over https:// only.")
     from hermes_cli.plugins_cmd_catalog import raise_if_removed
-    raise_if_removed(resolved, git_url, *((catalog_name,) if catalog_name else ()))
-    return git_url, subdir, resolved, revision
+    raise_if_removed(identifier, git_url, *((catalog_name,) if catalog_name else ()))
+    return git_url, subdir, revision
 
 
-def install_desktop_plugin(identifier: str, *, catalog_name: Optional[str] = None,
+def install_desktop_plugin(identifier: str, *, ref: Optional[str], catalog_name: Optional[str] = None,
                            force: bool = False) -> dict[str, Any]:
     """Clone a repository's desktop half into ``desktop-plugins/<name>`` on this host.
 
-    Returns ``{ok, plugin_name, path, sha, paired_with_agent, warnings}``, or ``ok: False`` with
-    ``error``. The clone is held to the commit the inspection read, so a repository that moves after
-    review cannot install a tree nobody looked at. A package carrying both halves lands under its
-    *agent* name with the package marker Electron writes, so the Plugins page pairs the two rows; a
-    desktop-only repository keeps its Git-derived folder name and carries no marker (it would claim
-    another package's agent half).
+    *ref* is the commit the install dialog showed (``inspect``'s ``sha``): the clone is checked out at
+    exactly that commit, so a repository that moved after review is refused rather than installed. The
+    halves are read from that same checkout. Returns ``{ok, plugin_name, path, sha, paired_with_agent,
+    warnings}``, or ``ok: False`` with ``error``. A package carrying both halves lands under its *agent*
+    name with the package marker Electron writes, so the Plugins page pairs the two rows; a desktop-only
+    repository keeps its Git-derived folder name and carries no marker.
     """
-    from hermes_cli.plugins_cmd_inspect import forget_inspection, inspect_plugin_source
+    from hermes_cli.plugins_cmd_inspect import _desktop_folder_name, detect_components
 
-    if force:
-        # A forced reinstall means "the repository moved": answer from a fresh clone, not the check
-        # that named the tree now being replaced.
-        forget_inspection(identifier, catalog_name=catalog_name)
-    probe = inspect_plugin_source(identifier, catalog_name=catalog_name)
-    if not probe.get("ok"):
-        return _failure(probe.get("error") or "Could not read this plugin repository.")
-    if not probe.get("desktop"):
-        return _failure("This package ships no desktop plugin to install here.")
-
-    agent_name = probe.get("agent_name") if probe.get("agent") else None
+    pc = _pc()
+    sha = (ref or "").strip().lower()
     try:
-        package_name = _checked_name(agent_name) if agent_name else None
-        folder = package_name or _checked_name(probe.get("desktop_name"))
-        git_url, subdir, _resolved, revision = _source(identifier, catalog_name)
-    except _pc().PluginOperationError as exc:
-        return _failure(str(exc))
-
-    root = desktop_plugins_root()
-    target = root / folder
-    try:
+        if not _COMMIT.fullmatch(sha):
+            raise pc.PluginOperationError("Installing a desktop plugin needs the commit the install dialog reviewed.")
+        git_url, subdir, catalog_sha = _https_source(identifier, catalog_name)
+        if catalog_sha and catalog_sha.lower() != sha:
+            raise pc.PluginOperationError("The catalog's reviewed commit changed since the dialog read it; inspect it again.")
+        root = desktop_plugins_root()
         with tempfile.TemporaryDirectory(prefix="hermes-plugin-install-") as tmp:
             clone = Path(tmp) / "plugin"
-            # The commit the inspection named, when it named one: the install must be the tree that
-            # was reviewed, not whatever the branch moved to since.
-            sha = _pc()._clone_plugin_repo(clone, git_url, probe.get("sha") or revision, subdir)
-            plugin_root = _pc()._resolve_subdir_within(clone, subdir) if subdir else clone
+            pc._clone_plugin_repo(clone, git_url, sha, subdir)
+            plugin_root = pc._resolve_subdir_within(clone, subdir) if subdir else clone
+            fallback = subdir.rstrip("/").rsplit("/", 1)[-1] if subdir else pc._repo_name_from_url(git_url)
+            found = detect_components(plugin_root, fallback)
+            if not found["desktop"]:
+                return _failure("This package ships no desktop plugin to install here.")
+            package_name = _checked_name(found["agent_name"]) if found["agent"] else None
+            folder = package_name or _checked_name(_desktop_folder_name(git_url, subdir))
             source_dir = _desktop_tree(plugin_root)
-
-            if source_dir is None:
-                return _failure("No desktop plugin.js found in this repository.")
-
-            # A package's half keeps the marker Electron writes (the Plugins page pairs it to the
-            # agent row); a standalone plugin carries none.
-            marker = None
-            if package_name:
-                marker = {
-                    "package": package_name,
-                    "repo": git_url,
-                    "source": str(target),
-                    "sourceMtimeMs": halves.mtime_ms((source_dir / "plugin.js").stat()),
-                }
-
-            # Under the root's writer lock: the exists check and the publish must not interleave with
-            # a reconcile pass copying the same package's folder.
+            target = root / folder
+            # A package's half keeps the marker Electron writes (the Plugins page pairs it to the agent
+            # row); a standalone plugin carries none.
+            marker = {"package": package_name, "repo": git_url, "source": str(target),
+                      "sourceMtimeMs": halves.mtime_ms((source_dir / "plugin.js").stat())} if package_name else None
+            # The exists check and the publish must not interleave with a reconcile pass.
             with halves.ROOT_WRITER:
-                if target.is_symlink() or target.exists():
-                    if not force:
-                        return _failure(
-                            f"Desktop plugin '{folder}' already exists. Enable force reinstall to replace it."
-                        )
+                if (target.is_symlink() or target.exists()) and not force:
+                    return _failure(f"Desktop plugin '{folder}' already exists. Enable force reinstall to replace it.")
                 halves.publish_desktop_tree(source_dir, target, marker)
-    except _pc().PluginOperationError as exc:
+    except pc.PluginOperationError as exc:
         return _failure(str(exc))
     except OSError as exc:
         return _failure(f"Could not install the desktop plugin: {exc}")
 
     return {"ok": True, "plugin_name": folder, "path": str(target), "sha": sha,
-            "paired_with_agent": bool(package_name), "warnings": list(probe.get("warnings") or [])}
+            "paired_with_agent": bool(package_name), "warnings": []}
 
 
-def _desktop_tree(plugin_root: Path) -> Optional[Path]:
+def _desktop_tree(plugin_root: Path) -> Path:
     """The folder that is the desktop plugin: the repository root when ``plugin.js`` sits there, else
-    its ``desktop/`` subfolder — Electron's ``findDesktopEntry`` search, narrowed to those two."""
-    if (plugin_root / "plugin.js").is_file():
-        return plugin_root
-    if (plugin_root / "desktop" / "plugin.js").is_file():
-        return plugin_root / "desktop"
-    return None
+    its ``desktop/`` subfolder (Electron's ``findDesktopEntry``, narrowed to those two). It must be a
+    plain tree inside the clone: a link could publish any folder of the host, and the copy is capped."""
+    source = plugin_root if (plugin_root / "plugin.js").is_file() else plugin_root / "desktop"
+    total = 0
+    for folder, dirs, files in os.walk(source):
+        for entry in (Path(folder), *(Path(folder) / n for n in dirs + files)):
+            if entry.is_symlink():
+                raise _pc().PluginOperationError(
+                    f"The desktop plugin contains a link ({entry.relative_to(plugin_root)}); links are not installed.")
+        total += sum((Path(folder) / n).stat().st_size for n in files)
+        if total > _TREE_MAX_BYTES:
+            raise _pc().PluginOperationError(
+                f"The desktop plugin is larger than {_TREE_MAX_BYTES // (1024 * 1024)} MB.")
+    return source
 
 
 def remove_desktop_plugin(name: str, *, force: bool = False) -> dict[str, Any]:

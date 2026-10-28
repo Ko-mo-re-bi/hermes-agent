@@ -629,8 +629,9 @@ class PluginsAction(WireEnum):
 class PluginsManageParams(ProfileParams):
     """``toggle``: ``key``/``name`` + ``enable``; ``install``: ``identifier``/``repo`` or ``catalog_name``
     (+ ``force``, ``enable``, ``ref``); ``inspect``: ``identifier``/``repo`` or ``catalog_name``;
-    ``install_desktop``: ``identifier``/``repo`` or ``catalog_name`` (+ ``force``) — the desktop half onto
-    the host that serves this client, held to the commit ``inspect`` read; ``remove_desktop``: ``name``
+    ``install_desktop``: ``identifier``/``repo`` (https only) or ``catalog_name`` + ``ref`` (the commit
+    ``inspect`` read and the dialog showed; another commit is refused) (+ ``force``) — the desktop half onto
+    the host that serves this client; ``remove_desktop``: ``name``
     (+ ``force`` for a package's own half); ``update``: ``name`` (+ ``accept_capabilities`` to apply a re-pin
     that widened the plugin after the user confirmed the ``delta``, + ``force`` to apply an update whose
     security scan returned caution after the user saw the findings); ``remove``: ``name`` (user installs only);

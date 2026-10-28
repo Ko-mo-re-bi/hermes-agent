@@ -205,15 +205,24 @@ def _git_plugin_repo(path, files):
     return path
 
 
-def test_a_plugin_installed_through_the_backend_is_served_to_the_browser(webapp, hermes_root, tmp_path):
+def test_a_plugin_installed_through_the_backend_is_served_to_the_browser(webapp, hermes_root, tmp_path,
+                                                                        monkeypatch):
     # The whole trip the dialog makes: `plugins.manage install_desktop` clones onto this host, then the
     # browser's loader reads exactly what the Webapp serves.
+    import subprocess
+
+    from hermes_cli import plugins_cmd
     from hermes_cli.desktop_plugin_install import install_desktop_plugin
 
     repo = _git_plugin_repo(tmp_path / "gizmo", {"plugin.js": "export default { id: 'gizmo' }\n",
                                                  "panel.js": "export const x = 1\n"})
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True,
+                         text=True, encoding="utf-8").stdout.strip()
+    real = plugins_cmd._clone_plugin_repo
+    monkeypatch.setattr(plugins_cmd, "_clone_plugin_repo",
+                        lambda dest, _url, revision, subdir=None: real(dest, repo.as_uri(), revision, subdir))
 
-    result = install_desktop_plugin(repo.as_uri())
+    result = install_desktop_plugin("https://example.invalid/acme/gizmo.git", ref=sha)
 
     assert result["ok"] is True, result
     folders = webapp.get("/api/desktop-plugins/root").json()["root"]

@@ -208,8 +208,10 @@ describe('Plugin install in the browser-hosted app with a backend that installs 
       return params?.action === 'install' ? install : { plugins: [] }
     })
 
-  it('installs a desktop-only package on the host through the backend', async () => {
-    desktopBackend({ ok: true, agent: false, desktop: true, desktop_name: 'ui', warnings: [] },
+  it('installs a desktop-only package on the host through the backend, at the reviewed commit', async () => {
+    const reviewed = 'e404b6816b20237a82f6fbe2749b5a576cf75dba'
+
+    desktopBackend({ ok: true, agent: false, desktop: true, desktop_name: 'ui', sha: reviewed, warnings: [] },
       { ok: true, plugin_name: 'ui', paired_with_agent: false })
 
     renderModal()
@@ -223,7 +225,8 @@ describe('Plugin install in the browser-hosted app with a backend that installs 
     expect(callsFor('install_desktop')[0][1]).toMatchObject({
       action: 'install_desktop',
       identifier: 'https://github.com/example/ui',
-      force: false
+      force: false,
+      ref: reviewed
     })
     // No agent half exists in this repository: nothing is installed into the plugins folder.
     expect(callsFor('install')).toHaveLength(0)

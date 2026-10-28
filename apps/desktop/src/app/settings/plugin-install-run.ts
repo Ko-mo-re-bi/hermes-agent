@@ -152,7 +152,10 @@ async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, repor
         identifier: plan.request.repo,
         catalogName: plan.request.catalogName,
         force: plan.force,
-        profile: plan.profile
+        profile: plan.profile,
+        // The pin the user typed, else the commit the dialog showed: the host installs exactly that tree
+        // or refuses.
+        ref: plan.ref ?? plan.probe.sha
       })
 
   if (!result.ok) {
