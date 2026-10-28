@@ -16,13 +16,13 @@ from __future__ import annotations
 
 import os
 import re
-import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
 from hermes_cli import desktop_plugin_halves as halves
 from hermes_constants import get_default_hermes_root
+from utils import rmtree_readonly
 
 DESKTOP_PLUGINS_DIR = "desktop-plugins"
 _COMMIT = re.compile(r"[0-9a-f]{40}")
@@ -108,12 +108,18 @@ def install_desktop_plugin(identifier: str, *, ref: Optional[str], catalog_name:
         if not _COMMIT.fullmatch(sha):
             raise pc.PluginOperationError("Installing a desktop plugin needs the commit the install dialog reviewed.")
         git_url, subdir, catalog_sha = _https_source(identifier, catalog_name)
-        if catalog_sha and catalog_sha.lower() != sha:
-            raise pc.PluginOperationError("The catalog's reviewed commit changed since the dialog read it; inspect it again.")
         root = desktop_plugins_root()
         with tempfile.TemporaryDirectory(prefix="hermes-plugin-install-") as tmp:
             clone = Path(tmp) / "plugin"
-            pc._clone_plugin_repo(clone, git_url, sha, subdir)
+            # A catalog entry is fetched at its own pin, as the agent installer fetches it: an
+            # annotated-tag pin names the tag object, and only its peeled commit is what the dialog read.
+            head = pc._clone_plugin_repo(clone, git_url, catalog_sha or sha, subdir)
+            if head != sha:
+                raise pc.PluginOperationError(
+                    "The catalog's reviewed commit changed since the dialog read it; inspect it again.")
+            # Nothing reads a plugin's Git metadata, and Git's read-only object files would make the
+            # published folder one that Windows cannot delete.
+            rmtree_readonly(clone / ".git")
             plugin_root = pc._resolve_subdir_within(clone, subdir) if subdir else clone
             fallback = subdir.rstrip("/").rsplit("/", 1)[-1] if subdir else pc._repo_name_from_url(git_url)
             found = detect_components(plugin_root, fallback)
@@ -185,7 +191,7 @@ def remove_desktop_plugin(name: str, *, force: bool = False) -> dict[str, Any]:
                 f"'{folder}' is the desktop half of an agent plugin — uninstall that plugin instead."
             )
         try:
-            shutil.rmtree(target)
+            rmtree_readonly(target)
         except OSError as exc:
             return _failure(f"Could not remove the desktop plugin: {exc}")
 

@@ -722,10 +722,12 @@ an agent+desktop package is copied into the folder by the host itself, so it als
 headless host that native Desktop never runs on.
 
 **Install** works from the Webapp too: **Capabilities → Plugins → Install** inspects the repository
-first, then has the host that serves the tab clone the plugin into that folder (a desktop-only
-repository, or the desktop half of a package) — the same folder name and package marker native Desktop
-uses. The host installs exactly the commit the dialog showed (or the one you pinned) and refuses if
-that commit cannot be fetched. Because a browser tab asks for it, this install takes `https://`
+first, then has the host that serves the tab clone a desktop-only repository into that folder, under
+the same folder name native Desktop uses. The host installs exactly the commit the dialog showed (or
+the one you pinned) and refuses if that commit cannot be fetched. A package that also ships an agent
+plugin is installed once, as an agent plugin on that host, and the host copies its desktop half out of
+that checkout, as native Desktop does with a local backend. Because a browser tab asks for it, the
+desktop-only clone takes `https://`
 repositories only (no `http://`, `ssh`/`git@` or `file://` sources), refuses a plugin folder that
 contains symbolic links or is larger than 64 MB, and never replaces an installed plugin unless
 **Force reinstall** is checked. A plugin installed this way loads on the next scan; a plugin that

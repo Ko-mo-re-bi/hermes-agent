@@ -234,21 +234,35 @@ describe('Plugin install in the browser-hosted app with a backend that installs 
     await waitFor(() => expect($pluginInstallRequest.get()).toBeNull())
   })
 
-  it('installs both halves of a mixed package', async () => {
-    desktopBackend({ ok: true, agent: true, agent_name: 'pkg', desktop: true, desktop_name: 'pkg', warnings: [] },
-      { ok: true, plugin_name: 'pkg', paired_with_agent: true },
-      { ok: true, plugin_name: 'pkg', enabled: true })
+  it('installs a mixed package once and has the host copy its desktop half out of that checkout', async () => {
+    const reviewed = 'e404b6816b20237a82f6fbe2749b5a576cf75dba'
+    // The browser bridge's door to the host's desktop-plugins folder (browser-desktop-plugins.ts).
+    const reconcileDesktopPlugins = vi.fn(async () => [] as string[])
+    window.hermesDesktop = { reconcileDesktopPlugins } as unknown as Window['hermesDesktop']
 
-    renderModal()
-    act(() => openPluginInstallRequest({ repo: 'https://github.com/example/pkg' }))
+    try {
+      desktopBackend(
+        { ok: true, agent: true, agent_name: 'pkg', desktop: true, desktop_name: 'pkg', sha: reviewed, warnings: [] },
+        { ok: true, plugin_name: 'pkg', paired_with_agent: true },
+        { ok: true, plugin_name: 'pkg', enabled: true }
+      )
 
-    await waitFor(() => expect(installButton()?.disabled).toBe(false))
-    fireEvent.click(installButton()!)
+      renderModal()
+      act(() => openPluginInstallRequest({ repo: 'https://github.com/example/pkg' }))
 
-    await waitFor(() => expect(callsFor('install')).toHaveLength(1))
-    await waitFor(() => expect(callsFor('install_desktop')).toHaveLength(1))
-    await waitFor(() => expect($notifications.get().some(n => n.message === 'Desktop plugin pkg installed')).toBe(true))
-    expect($notifications.get().some(n => n.message === DESKTOP_UNAVAILABLE)).toBe(false)
+      await waitFor(() => expect(installButton()?.disabled).toBe(false))
+      fireEvent.click(installButton()!)
+
+      await waitFor(() => expect($notifications.get().some(n => n.message === 'Desktop plugin pkg installed')).toBe(true))
+      expect(callsFor('install')).toHaveLength(1)
+      expect(callsFor('install')[0][1]).toMatchObject({ action: 'install', identifier: 'https://github.com/example/pkg' })
+      // One checkout: no second clone of the same repository racing the host's scan into the same folder.
+      expect(callsFor('install_desktop')).toHaveLength(0)
+      expect(reconcileDesktopPlugins).toHaveBeenCalled()
+      expect($notifications.get().some(n => n.message === DESKTOP_UNAVAILABLE)).toBe(false)
+    } finally {
+      delete (window as { hermesDesktop?: unknown }).hermesDesktop
+    }
   })
 
   it('says the install is unavailable when the backend predates the action', async () => {
@@ -274,7 +288,7 @@ describe('Plugin install in the browser-hosted app with a backend that installs 
     await waitFor(() => expect(installButton()?.disabled).toBe(false))
     fireEvent.click(installButton()!)
 
-    await waitFor(() => expect(screen.findByText(DESKTOP_UNAVAILABLE)).toBeTruthy())
+    expect(await screen.findByText(DESKTOP_UNAVAILABLE)).toBeTruthy()
     expect(callsFor('install')).toHaveLength(0)
   })
 })

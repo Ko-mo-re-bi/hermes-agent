@@ -53,10 +53,12 @@ export function skipsDesktopHalf(request: PluginInstallRequest, probe: ProbeResu
 }
 
 /** A unified package installed into a local backend carries its own desktop half; the app copies that half
- *  out of the package folder. Only a remote backend (whose plugins/ folder this machine cannot read) or a
- *  desktop-only repo needs a separate desktop clone. */
+ *  out of the package folder. A browser tab's backend is the host that serves it, so the package lands on
+ *  the disk the tab's plugins load from and that host copies the half the same way: one checkout, never a
+ *  second clone racing its scan. Only native Desktop on a remote backend (whose plugins/ folder this
+ *  machine cannot read) or a desktop-only repo needs a separate desktop clone. */
 export function desktopHalfFromPackage(components: InstallComponents, remote: boolean): boolean {
-  return components.agent && !remote
+  return components.agent && (!remote || isBrowserHostedDesktop())
 }
 
 export interface InstallPlan {
@@ -143,7 +145,8 @@ async function installAgentHalf(plan: InstallPlan, deps: InstallDeps, report: Re
 
 async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, report: Report, deps: InstallDeps): Promise<void> {
   // Native Desktop clones it in Electron; a browser-hosted tab asks the host that serves it, and the
-  // plugin lands in the folder this Webapp already loads.
+  // plugin lands in the folder this Webapp already loads. A tab installing a package's agent half never
+  // clones the desktop half here: the host copies it out of that one checkout (`desktopHalfFromPackage`).
   const installFn = window.hermesDesktop?.installDesktopPlugin
 
   const result: { error?: string; ok: boolean; pluginName?: string; unsupported?: boolean } = installFn

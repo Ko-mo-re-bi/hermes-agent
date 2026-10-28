@@ -26,6 +26,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+from utils import rmtree_readonly
+
 logger = logging.getLogger(__name__)
 
 PACKAGE_MARKER = ".hermes-package.json"
@@ -123,7 +125,7 @@ def publish_desktop_tree(source_dir: Path, target: Path, marker: dict | None) ->
         if target.is_symlink():
             target.unlink()
         elif target.exists():
-            shutil.rmtree(target)
+            rmtree_readonly(target)
         os.rename(staged, target)
     finally:
         shutil.rmtree(staging, ignore_errors=True)

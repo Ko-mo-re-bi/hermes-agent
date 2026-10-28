@@ -7,8 +7,11 @@ agent row, a standalone plugin carries none, and nothing installs twice without 
 """
 
 import json
+import os
+import stat
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -200,3 +203,85 @@ def test_remove_leaves_a_linked_plugin_alone_and_names_nothing_outside_the_root(
 
     assert "folder name" in install.remove_desktop_plugin("../config.yaml")["error"]
     assert "No desktop plugin named 'ghost'" in install.remove_desktop_plugin("ghost")["error"]
+
+
+def _catalog(monkeypatch, sha: str) -> None:
+    from hermes_cli import plugins_cmd_catalog
+    entry = SimpleNamespace(install_identifier=URL, sha=sha)
+    monkeypatch.setattr(plugins_cmd_catalog, "get_live_catalog_entry", lambda name: entry if name == "gizmo" else None)
+
+
+def test_a_catalog_pin_naming_an_annotated_tag_installs_the_commit_it_points_at(home, repo, monkeypatch):
+    # The catalog publishes `git rev-parse v1.0` (the tag object); inspect reports the commit it peels to.
+    reviewed = _commit(repo, {"plugin.js": "export default { v: 1 }\n"})
+    _git(repo, "-c", "user.email=t@example.invalid", "-c", "user.name=t", "tag", "-a", "v1.0", reviewed, "-m", "v1.0")
+    _commit(repo, {"plugin.js": "export default { v: 2 }\n"})
+    tag_object = _git(repo, "rev-parse", "v1.0")
+    assert tag_object != reviewed
+    _catalog(monkeypatch, tag_object)
+
+    result = install.install_desktop_plugin(URL, ref=reviewed, catalog_name="gizmo")
+
+    assert result["ok"] is True, result
+    assert "v: 1" in (_root(home) / "gizmo" / "plugin.js").read_text(encoding="utf-8")
+
+
+def test_a_catalog_pin_that_moved_since_the_review_is_refused(home, repo, monkeypatch):
+    reviewed = _commit(repo, {"plugin.js": "export default { v: 1 }\n"})
+    _catalog(monkeypatch, _commit(repo, {"plugin.js": "export default { v: 2 }\n"}))
+
+    result = install.install_desktop_plugin(URL, ref=reviewed, catalog_name="gizmo")
+
+    assert result["ok"] is False and "inspect it again" in result["error"], result
+    assert not (_root(home) / "gizmo").exists()
+
+
+def test_the_published_plugin_carries_no_git_metadata(home, repo):
+    sha = _commit(repo, {"plugin.js": "export default {}\n"})
+
+    assert install.install_desktop_plugin(URL, ref=sha)["ok"] is True
+
+    folder = _root(home) / "gizmo"
+    assert (folder / "plugin.js").is_file()
+    assert not (folder / ".git").exists()
+
+
+def _read_only_git_objects(folder: Path) -> Path:
+    """What a root-level plugin cloned by native Desktop (or by hand) carries: Git's loose object files
+    are read-only, which a plain ``shutil.rmtree`` cannot delete on Windows. The folder holding them is
+    made read-only too, which stops the same delete on POSIX (package-manager installs ship ``0555``)."""
+    obj = folder / ".git" / "objects" / "ab" / "cdef"
+    obj.parent.mkdir(parents=True)
+    obj.write_bytes(b"x")
+    os.chmod(obj, stat.S_IREAD)
+    os.chmod(obj.parent, stat.S_IREAD | stat.S_IEXEC)
+    return obj
+
+
+def _replace_then_remove_a_plugin_holding_read_only_git_objects(home: Path, repo: Path) -> None:
+    sha = _commit(repo, {"plugin.js": "export default { v: 1 }\n"})
+    folder = _root(home) / "gizmo"
+    assert install.install_desktop_plugin(URL, ref=sha)["ok"] is True
+    _read_only_git_objects(folder)
+
+    replaced = install.install_desktop_plugin(URL, ref=sha, force=True)
+
+    assert replaced["ok"] is True, replaced
+    assert not (folder / ".git").exists()
+
+    _read_only_git_objects(folder)
+    result = install.remove_desktop_plugin("gizmo")
+
+    assert result["ok"] is True, result
+    assert not folder.exists()
+
+
+@pytest.mark.platforms("windows")
+def test_windows_force_replaces_and_removes_a_plugin_holding_read_only_git_objects(home, repo):
+    _replace_then_remove_a_plugin_holding_read_only_git_objects(home, repo)
+
+
+@pytest.mark.platforms("posix")
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root deletes from read-only folders")
+def test_posix_force_replaces_and_removes_a_plugin_holding_read_only_git_objects(home, repo):
+    _replace_then_remove_a_plugin_holding_read_only_git_objects(home, repo)
