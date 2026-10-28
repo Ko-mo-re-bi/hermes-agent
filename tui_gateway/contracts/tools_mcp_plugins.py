@@ -628,7 +628,8 @@ class PluginsAction(WireEnum):
 
 class PluginsManageParams(ProfileParams):
     """``toggle``: ``key``/``name`` + ``enable``; ``install``: ``identifier``/``repo`` or ``catalog_name``
-    (+ ``force``, ``enable``, ``ref``); ``inspect``: ``identifier``/``repo`` or ``catalog_name``;
+    (+ ``force``, ``enable``, ``ref``, ``inspected_sha`` = the commit ``inspect`` read: a custom source with no
+    ``ref`` whose branch moved since is refused); ``inspect``: ``identifier``/``repo`` or ``catalog_name``;
     ``install_desktop``: ``identifier``/``repo`` (https only) or ``catalog_name`` + ``ref`` (the commit
     ``inspect`` read and the dialog showed; another commit is refused) (+ ``force``) — the desktop half onto
     the host that serves this client; ``remove_desktop``: ``name``
@@ -647,6 +648,7 @@ class PluginsManageParams(ProfileParams):
     catalog_name: str | None = None
     force: bool | None = None
     ref: str | None = None
+    inspected_sha: str | None = None
     accept_capabilities: bool | None = None
     values: dict[str, JsonValue] | None = None
     names: list[str] | None = None

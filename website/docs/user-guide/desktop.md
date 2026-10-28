@@ -726,7 +726,9 @@ first, then has the host that serves the tab clone a desktop-only repository int
 the same folder name native Desktop uses. The host installs exactly the commit the dialog showed (or
 the one you pinned) and refuses if that commit cannot be fetched. A package that also ships an agent
 plugin is installed once, as an agent plugin on that host, and the host copies its desktop half out of
-that checkout, as native Desktop does with a local backend. Because a browser tab asks for it, the
+that checkout, as native Desktop does with a local backend. That install is held to the commit the
+dialog showed too: if the branch moved after you reviewed it, the install is refused and re-opening
+the dialog reads the new version (native Desktop works the same way). Because a browser tab asks for it, the
 desktop-only clone takes `https://`
 repositories only (no `http://`, `ssh`/`git@` or `file://` sources), refuses a plugin folder that
 contains symbolic links or is larger than 64 MB, and never replaces an installed plugin unless

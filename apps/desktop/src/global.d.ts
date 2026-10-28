@@ -666,6 +666,8 @@ declare global {
         identifier?: string
         repo?: string
         force?: boolean
+        /** The commit the dialog reviewed; Electron installs exactly that tree or refuses. */
+        sha?: string
       }) => Promise<{ ok: boolean; pluginName?: string; path?: string; error?: string }>
       /** Delete a STANDALONE desktop plugin folder (`<desktop-plugins root>/<name>`);
        *  Electron re-checks containment and refuses unified-package halves. */

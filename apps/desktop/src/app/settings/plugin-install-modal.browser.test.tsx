@@ -234,6 +234,24 @@ describe('Plugin install in the browser-hosted app with a backend that installs 
     await waitFor(() => expect($pluginInstallRequest.get()).toBeNull())
   })
 
+  it('holds the agent install to the commit the dialog inspected', async () => {
+    const reviewed = 'e404b6816b20237a82f6fbe2749b5a576cf75dba'
+
+    desktopBackend({ ok: true, agent: true, agent_name: 'pkg', desktop: false, sha: reviewed, warnings: [] }, {},
+      { ok: true, plugin_name: 'pkg', enabled: true })
+
+    renderModal()
+    act(() => openPluginInstallRequest({ repo: 'https://github.com/example/pkg' }))
+
+    await waitFor(() => expect(installButton()?.disabled).toBe(false))
+    fireEvent.click(installButton()!)
+
+    await waitFor(() => expect(callsFor('install')).toHaveLength(1))
+    expect(callsFor('install')[0][1]).toMatchObject({ action: 'install', inspected_sha: reviewed })
+    // Not a pin: the backend refuses a branch that moved, and updates still follow the branch.
+    expect(callsFor('install')[0][1]).not.toHaveProperty('ref')
+  })
+
   it('installs a mixed package once and has the host copy its desktop half out of that checkout', async () => {
     const reviewed = 'e404b6816b20237a82f6fbe2749b5a576cf75dba'
     // The browser bridge's door to the host's desktop-plugins folder (browser-desktop-plugins.ts): the

@@ -297,6 +297,9 @@ export async function installAgentPlugin(
     catalogName?: string
     /** Pin a custom source to one full commit SHA (team-wide reproducible install). */
     ref?: string
+    /** The commit the install dialog inspected: a custom source with no `ref` whose branch moved since is
+     *  refused by the backend, never installed at the new tip. */
+    inspectedSha?: string
     /** Target profile's HERMES_HOME (null/undefined = backend launch profile). */
     profile?: string | null
   }
@@ -325,7 +328,8 @@ export async function installAgentPlugin(
           force: Boolean(opts.force),
           enable: opts.enable ?? true,
           ...(opts.catalogName ? { catalog_name: opts.catalogName } : {}),
-          ...(opts.ref ? { ref: opts.ref } : {})
+          ...(opts.ref ? { ref: opts.ref } : {}),
+          ...(!opts.ref && opts.inspectedSha ? { inspected_sha: opts.inspectedSha } : {})
         },
         opts.profile
       ),

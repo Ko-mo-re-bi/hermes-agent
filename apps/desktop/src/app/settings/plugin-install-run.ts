@@ -124,6 +124,9 @@ async function installAgentHalf(plan: InstallPlan, deps: InstallDeps, report: Re
     enable: plan.enable,
     catalogName: request.catalogName,
     ref: plan.ref,
+    // The commit the dialog showed: a branch that moved since must not install a tree nobody reviewed.
+    // A catalog pick installs at the catalog's own pin.
+    inspectedSha: request.catalogName ? undefined : plan.probe.sha,
     profile: plan.profile
   })
 
@@ -150,7 +153,7 @@ async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, repor
   const installFn = window.hermesDesktop?.installDesktopPlugin
 
   const result: { error?: string; ok: boolean; pluginName?: string; unsupported?: boolean } = installFn
-    ? await installFn({ identifier: plan.request.repo, force: plan.force })
+    ? await installFn({ identifier: plan.request.repo, force: plan.force, sha: plan.ref ?? plan.probe.sha })
     : await installDesktopPluginHalf(deps.requestGateway, {
         identifier: plan.request.repo,
         catalogName: plan.request.catalogName,
