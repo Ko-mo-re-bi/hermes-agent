@@ -573,8 +573,15 @@ def plugin_surface(manifest: dict, tree: Path) -> dict[str, set]:
         "tools": _list("provides_tools"), "hooks": _list("provides_hooks", "hooks"),
         "python_dependencies": _list("python_dependencies"), "requires_auth": _list("requires_auth"),
         "oauth": oauth_surface(manifest),
-        "desktop": {"desktop/plugin.js"} if (tree / "desktop" / "plugin.js").is_file() else set(),
+        "desktop": _desktop_surface(tree),
     }
+
+
+def _desktop_surface(tree: Path) -> set:
+    """The desktop entry the tree ships, by the installers' own layout rule (root or ``desktop/``)."""
+    from hermes_cli.desktop_plugin_halves import desktop_source
+    source = desktop_source(tree)
+    return {(source / "plugin.js").relative_to(tree).as_posix()} if source else set()
 
 
 def surface_delta(old: dict[str, set], new: dict[str, set]) -> dict[str, list[str]]:
