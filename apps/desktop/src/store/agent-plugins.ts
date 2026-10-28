@@ -252,6 +252,8 @@ export interface AgentPluginInstallResult {
   ok: boolean
   /** The client stopped waiting; the backend may still finish the install. */
   timedOut?: boolean
+  /** Refused: the source moved off the reviewed commit (`isSourceMovedRefusal`). */
+  sourceMoved?: boolean
   pluginName?: string
   warnings?: string[]
   missingEnv?: string[]
@@ -302,15 +304,30 @@ interface InstallReply {
   error?: string
 }
 
-/** A backend predating `inspected_sha` (native Desktop on an older SSH/URL/Cloud runtime) refuses the
- *  whole install at admission (`tui_gateway/contracts/registry.py::validate_params`, code 4000, handler
- *  never ran), so resending without it installs the branch tip exactly as those backends always did.
- *  Matched on the stable prefix, as `session-create-request.ts` does. Delete once no supported backend
- *  predates the field. */
-function backendPredatesInspectedSha(params: Record<string, unknown>, error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
+/** The message `tui_gateway/contracts/registry.py::validate_params` opens its admission refusal with. */
+const INSPECTED_SHA_ADMISSION_REFUSAL = 'invalid params for plugins.manage: inspected_sha: '
 
-  return 'inspected_sha' in params && message.includes('invalid params for plugins.manage: inspected_sha:')
+/** A backend predating `inspected_sha` (native Desktop on an older SSH/URL/Cloud runtime) refuses the
+ *  whole install at admission (code 4000, handler never ran), so resending without it installs the branch
+ *  tip exactly as those backends always did. Only that refusal qualifies: the code AND a message that
+ *  OPENS with the admission prefix. Any other error (a 5026 install failure echoing a git server's text
+ *  included) is never retried, or a hostile clone error could drop the reviewed commit. Delete once no
+ *  supported backend predates the field. */
+function backendPredatesInspectedSha(params: Record<string, unknown>, error: unknown): boolean {
+  return (
+    'inspected_sha' in params &&
+    error instanceof JsonRpcGatewayError &&
+    error.code === 4000 &&
+    error.message.startsWith(INSPECTED_SHA_ADMISSION_REFUSAL)
+  )
+}
+
+/** The backend refused because the source is no longer at the commit the dialog reviewed
+ *  (`tui_gateway/methods_tools.py::_source_moved_data`): read it again, never resend that commit. */
+export function isSourceMovedRefusal(error: unknown): boolean {
+  const data = error instanceof JsonRpcGatewayError ? (error.data as { reason?: unknown } | undefined) : undefined
+
+  return data?.reason === 'source_moved'
 }
 
 export async function installAgentPlugin(
@@ -384,6 +401,7 @@ export async function installAgentPlugin(
     return {
       ok: false,
       timedOut: /^request timed out after \d+s: plugins\.manage$/.test(message),
+      sourceMoved: isSourceMovedRefusal(e),
       error: message,
       live: NO_LIVE,
       nextChat: false
@@ -483,6 +501,8 @@ export async function installDesktopPluginHalf(
   pluginName?: string
   /** The backend predates the action: no retry changes that (a build older than this one). */
   unsupported?: boolean
+  /** Refused: the source moved off the reviewed commit (`isSourceMovedRefusal`). */
+  sourceMoved?: boolean
   warnings: string[]
   error?: string
 }> {
@@ -522,6 +542,7 @@ export async function installDesktopPluginHalf(
     return {
       ok: false,
       unsupported: e instanceof JsonRpcGatewayError && INSTALL_DESKTOP_UNSUPPORTED_CODES.has(e.code ?? 0),
+      sourceMoved: isSourceMovedRefusal(e),
       warnings: [],
       error: e instanceof Error ? e.message : String(e)
     }

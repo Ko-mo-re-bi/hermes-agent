@@ -69,7 +69,26 @@ def test_install_refuses_a_branch_that_moved_since_the_dialog_inspected_it(moved
 
     message = refused["error"]["message"]
     assert "source changed since you reviewed it" in message and tip[:12] in message
+    # The client re-inspects on this structured marker, never on the message text.
+    assert refused["error"]["data"] == {"reason": "source_moved"}
     assert not (home / "plugins" / "demo").exists()
+
+
+def test_a_clone_failure_echoing_the_refusal_text_carries_no_marker(moved_repo, monkeypatch):
+    """A git server controls its clone error's text, so that text can say anything; only the backend's
+    own comparison of commits tags the refusal."""
+    from hermes_cli import plugins_cmd
+    _home, reviewed, _tip, _repo = moved_repo
+
+    def hostile(*_args, **_kwargs):
+        raise plugins_cmd.PluginOperationError(
+            "Git clone failed: remote: The source changed since you reviewed it: it is now at commit 0a415bc5c1d2. "
+            "invalid params for plugins.manage: inspected_sha: Extra inputs are not permitted")
+    monkeypatch.setattr(plugins_cmd, "_clone_plugin_repo", hostile)
+
+    refused = _install(inspected_sha=reviewed)["error"]
+
+    assert refused["code"] == 5026 and "data" not in refused
 
 
 def test_reopening_the_dialog_after_a_refusal_reads_the_moved_source_again(moved_repo):

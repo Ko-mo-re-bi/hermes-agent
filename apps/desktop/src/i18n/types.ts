@@ -652,6 +652,7 @@ catalog: CatalogTranslations
         versionLabel: string
         reviewedPin: (sha: string) => string
         latestCommit: string
+        sourceMoved: (sha: string) => string
         nothingToInstall: string
         includesHeading: string
         agentLabel: string

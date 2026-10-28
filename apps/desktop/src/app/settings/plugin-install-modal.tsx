@@ -32,7 +32,13 @@ import { $activeGatewayProfile, $profiles, $profileScope, normalizeProfileKey, p
 import { $connection } from '@/store/session'
 
 import { PluginInstallDetails } from './plugin-install-details'
-import { installComponents, type InstallModalCopy, type ProbeResult, runPluginInstall } from './plugin-install-run'
+import {
+  installComponents,
+  type InstallModalCopy,
+  type InstallOutcome,
+  type ProbeResult,
+  runPluginInstall
+} from './plugin-install-run'
 import { usePluginProbe } from './use-plugin-probe'
 
 const CAPTION = 'text-[length:var(--conversation-caption-font-size)]'
@@ -297,6 +303,27 @@ function InstallFooter({ canInstall, failed, installing, onInstall, onRetry, ret
   )
 }
 
+interface SourceMovedNoticeProps {
+  copy: InstallModalCopy
+  /** A failure on screen replaces the notice. */
+  failure: null | string
+  probe: null | ProbeResult
+  shown: boolean
+}
+
+/** The source moved past the commit the user reviewed: name the commit the fresh inspection read. */
+function SourceMovedNotice({ copy, failure, probe, shown }: SourceMovedNoticeProps) {
+  if (!shown || failure) {
+    return null
+  }
+
+  return (
+    <p className={cn(CAPTION, 'text-(--ui-text-secondary)')} role="status">
+      {copy.sourceMoved(probe?.ok ? (probe.sha?.slice(0, 12) ?? '') : '')}
+    </p>
+  )
+}
+
 interface InstallViewProps {
   request: PluginInstallRequest
   installing: boolean
@@ -329,6 +356,8 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
   const [pinRef, setPinRef] = useState('')
   const [installError, setInstallError] = useState<null | string>(null)
   const [installUncertain, setInstallUncertain] = useState(false)
+  // The source moved past the commit on screen: the dialog read it again and shows the new one for review.
+  const [sourceMoved, setSourceMoved] = useState(false)
 
   useEffect(() => {
     start(request.repo)
@@ -354,6 +383,7 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
   const install = async () => {
     onInstallingChange(true)
     setInstallError(null)
+    setSourceMoved(false)
 
     try {
       // A catalog pick may click Install while the inspection is still running: wait for it under the loader.
@@ -368,13 +398,19 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
         { copy: m, navigate, requestGateway }
       )
 
-      if (outcome.status === 'done') {
-        finishInstall(request, navigate)
-      } else if (outcome.status === 'uncertain') {
-        setInstallUncertain(true)
-      } else {
-        setInstallError(outcome.error)
+      const settle: Record<InstallOutcome['status'], () => void> = {
+        done: () => finishInstall(request, navigate),
+        uncertain: () => setInstallUncertain(true),
+        // Never resend the commit the source left: drop that inspection and read the source again, so
+        // Install waits on the new commit being on screen.
+        stale: () => {
+          setSourceMoved(true)
+          start(request.repo)
+        },
+        failed: () => setInstallError((outcome as Extract<InstallOutcome, { status: 'failed' }>).error)
       }
+
+      settle[outcome.status]()
     } finally {
       onInstallingChange(false)
     }
@@ -422,6 +458,7 @@ function InstallView({ request, installing, onInstallingChange }: InstallViewPro
             {failure}
           </p>
         )}
+        <SourceMovedNotice copy={m} failure={failure} probe={probe} shown={sourceMoved} />
         {installUncertain && (
           <p className={cn(CAPTION, 'text-(--ui-text-secondary)')} role="status">
             {m.installUncertain}

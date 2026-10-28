@@ -795,6 +795,10 @@ export const en: Translations = {
         versionLabel: 'Version',
         reviewedPin: sha => (sha ? `Reviewed pin ${sha}` : 'Reviewed pin'),
         latestCommit: 'Latest commit',
+        sourceMoved: sha =>
+          sha
+            ? `The repository changed since you reviewed it. Review the new version (commit ${sha}) before installing it.`
+            : 'The repository changed since you reviewed it. Reading the new version…',
         nothingToInstall: 'This package has nothing to install here.',
         includesHeading: 'This package includes',
         agentLabel: 'Agent plugin',

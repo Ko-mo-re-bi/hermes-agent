@@ -233,6 +233,7 @@ def test_a_catalog_pin_that_moved_since_the_review_is_refused(home, repo, monkey
     result = install.install_desktop_plugin(URL, ref=reviewed, catalog_name="gizmo")
 
     assert result["ok"] is False and "inspect it again" in result["error"], result
+    assert result.get("source_moved") is True  # the client re-reads the source instead of resending
     assert not (_root(home) / "gizmo").exists()
 
 

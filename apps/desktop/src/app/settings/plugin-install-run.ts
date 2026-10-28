@@ -77,11 +77,19 @@ export interface InstallDeps {
   requestGateway: GatewayRequest
 }
 
-export type InstallOutcome = { error: string; status: 'failed' } | { status: 'done' } | { status: 'uncertain' }
+/** `stale`: a half was refused because the source left the commit the dialog showed. Retrying would resend
+ *  that commit and fail forever, so the dialog reads the source again and shows the new commit first. */
+export type InstallOutcome =
+  | { error: string; status: 'failed' }
+  | { error: string; status: 'stale' }
+  | { status: 'done' }
+  | { status: 'uncertain' }
 
 interface Report {
   errors: string[]
   successes: string[]
+  /** A half was refused on the backend's or Electron's structured source-moved marker. */
+  sourceMoved: boolean
 }
 
 /** What an agent-plugin install made usable, as toast fragments ("12 tools connected", ...). */
@@ -132,6 +140,7 @@ async function installAgentHalf(plan: InstallPlan, deps: InstallDeps, report: Re
 
   if (!result.ok) {
     report.errors.push(result.error || deps.copy.agentFailed)
+    report.sourceMoved ||= Boolean(result.sourceMoved)
 
     return result
   }
@@ -152,7 +161,8 @@ async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, repor
   // clones the desktop half here: the host copies it out of that one checkout (`desktopHalfFromPackage`).
   const installFn = window.hermesDesktop?.installDesktopPlugin
 
-  const result: { error?: string; ok: boolean; pluginName?: string; unsupported?: boolean } = installFn
+  const result: { error?: string; ok: boolean; pluginName?: string; sourceMoved?: boolean; unsupported?: boolean } =
+    installFn
     ? await installFn({ identifier: plan.request.repo, force: plan.force, sha: plan.ref ?? plan.probe.sha })
     : await installDesktopPluginHalf(deps.requestGateway, {
         identifier: plan.request.repo,
@@ -168,6 +178,8 @@ async function cloneDesktopHalf(plan: InstallPlan, copy: InstallModalCopy, repor
     // A backend older than this build has no place to put the half: say what this environment can do,
     // which is what an install without Electron always said.
     report.errors.push(result.unsupported ? copy.desktopUnavailable : result.error || copy.desktopFailed)
+    // A pin the user typed that the source lacks is their pin to fix; a fresh inspection cannot change it.
+    report.sourceMoved ||= !plan.ref && Boolean(result.sourceMoved)
 
     return
   }
@@ -242,13 +254,18 @@ export async function runPluginInstall(plan: InstallPlan, deps: InstallDeps): Pr
     return { status: 'failed', error: deps.copy.nothingToInstall }
   }
 
-  const report: Report = { errors: [], successes: [] }
+  const report: Report = { errors: [], successes: [], sourceMoved: false }
   const agentResult = components.agent ? await installAgentHalf(plan, deps, report) : undefined
 
   if (agentResult?.timedOut) {
     void loadAgentPlugins(deps.requestGateway, plan.profile)
 
     return { status: 'uncertain' }
+  }
+
+  // Nothing from a review the source has moved past is installed: not the other half either.
+  if (agentResult?.sourceMoved) {
+    return { status: 'stale', error: report.errors.join(' ') }
   }
 
   if (components.desktop) {
@@ -266,7 +283,7 @@ export async function runPluginInstall(plan: InstallPlan, deps: InstallDeps): Pr
   }
 
   if (report.errors.length > 0) {
-    return { status: 'failed', error: report.errors.join(' ') }
+    return { status: report.sourceMoved ? 'stale' : 'failed', error: report.errors.join(' ') }
   }
 
   // Open chats of the profile already have the plugin's MCP tools and skills; say which servers did not connect.

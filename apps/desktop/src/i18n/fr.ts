@@ -844,6 +844,10 @@ export const frOverrides = {
         versionLabel: 'Version',
         reviewedPin: sha => (sha ? `Pin examiné ${sha}` : 'Pin examiné'),
         latestCommit: 'Dernier commit',
+        sourceMoved: sha =>
+          sha
+            ? `Le dépôt a changé depuis votre examen. Examinez la nouvelle version (commit ${sha}) avant de l'installer.`
+            : 'Le dépôt a changé depuis votre examen. Lecture de la nouvelle version…',
         nothingToInstall: 'Ce paquet n’a rien à installer ici.'
       }
     },

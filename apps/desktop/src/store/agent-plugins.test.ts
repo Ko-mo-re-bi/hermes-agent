@@ -86,6 +86,43 @@ describe('installAgentPlugin', () => {
     expect(request.mock.calls[1][1]).not.toHaveProperty('inspected_sha')
   })
 
+  it('never drops the inspected commit for an install failure that merely quotes the admission refusal', async () => {
+    // A git server controls its clone error's text; the backend forwards it as a 5026 install failure.
+    // Only a code-4000 refusal OPENING with the admission prefix means "this backend predates the field".
+    const quoted =
+      'Git clone failed: remote: invalid params for plugins.manage: inspected_sha: Extra inputs are not permitted'
+
+    for (const error of [
+      new JsonRpcGatewayError('invalid params for plugins.manage: inspected_sha: Extra inputs are not permitted', {
+        code: 5026
+      }),
+      new JsonRpcGatewayError(quoted, { code: 4000 }),
+      new Error('invalid params for plugins.manage: inspected_sha: Extra inputs are not permitted')
+    ]) {
+      const request = vi.fn(async () => {
+        throw error
+      })
+
+      expect(
+        await installAgentPlugin(request as never, { identifier: 'https://github.com/example/pkg', inspectedSha: reviewed })
+      ).toMatchObject({ ok: false })
+      expect(request).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('reports a refusal carrying the backend source-moved marker as sourceMoved, and only that one', async () => {
+    const refusing = (data?: unknown) =>
+      vi.fn(async () => {
+        throw new JsonRpcGatewayError('The source changed since you reviewed it.', { code: 5026, data })
+      })
+
+    const install = (request: ReturnType<typeof refusing>) =>
+      installAgentPlugin(request as never, { identifier: 'https://github.com/example/pkg', inspectedSha: reviewed })
+
+    expect(await install(refusing({ reason: 'source_moved' }))).toMatchObject({ ok: false, sourceMoved: true })
+    expect(await install(refusing())).toMatchObject({ ok: false, sourceMoved: false })
+  })
+
   it('holds a current backend to the inspected commit and never resends a refusal of the moved branch', async () => {
     const request = vi.fn(async () => {
       throw new JsonRpcGatewayError(

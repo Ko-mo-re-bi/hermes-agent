@@ -842,6 +842,10 @@ export const deOverrides = {
         versionLabel: 'Version',
         reviewedPin: sha => (sha ? `Geprüfter Pin ${sha}` : 'Geprüfter Pin'),
         latestCommit: 'Neuester Commit',
+        sourceMoved: sha =>
+          sha
+            ? `Das Repository hat sich seit deiner Prüfung geändert. Prüfe die neue Version (Commit ${sha}), bevor du sie installierst.`
+            : 'Das Repository hat sich seit deiner Prüfung geändert. Die neue Version wird gelesen…',
         nothingToInstall: 'Dieses Paket hat hier nichts zu installieren.'
       }
     },

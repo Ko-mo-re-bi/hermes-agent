@@ -54,7 +54,12 @@ export interface DesktopPluginInstallResult {
   pluginName?: string
   path?: string
   error?: string
+  /** Refused: the reviewed commit is no longer in the source. The dialog reads the source again. */
+  sourceMoved?: boolean
 }
+
+/** `checkoutReviewedCommit`'s refusal, told apart by class rather than by its message. */
+class ReviewedCommitUnavailable extends Error {}
 
 export function resolvePluginGitUrl(identifier: string): ResolvedGitUrl {
   const trimmed = identifier.trim()
@@ -408,7 +413,7 @@ async function checkoutReviewedCommit(gitBin: string, cloneRoot: string, sha: st
       throw new Error(`HEAD is not ${reviewed}.`)
     }
   } catch (err) {
-    throw new Error(
+    throw new ReviewedCommitUnavailable(
       `The commit you reviewed (${reviewed.slice(0, 12)}) could not be checked out; the source may have changed ` +
         `since you reviewed it. Re-open the install dialog to review it again. ${err instanceof Error ? err.message : String(err)}`
     )
@@ -580,7 +585,11 @@ export async function installDesktopPluginFromGit(
       await fsp.rm(cloneRoot, { recursive: true, force: true }).catch(() => undefined)
     }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      ...(err instanceof ReviewedCommitUnavailable ? { sourceMoved: true } : {})
+    }
   }
 }
 

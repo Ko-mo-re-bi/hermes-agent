@@ -845,6 +845,10 @@ export const esOverrides = {
         versionLabel: 'Versión',
         reviewedPin: sha => (sha ? `Pin revisado ${sha}` : 'Pin revisado'),
         latestCommit: 'Último commit',
+        sourceMoved: sha =>
+          sha
+            ? `El repositorio cambió desde que lo revisaste. Revisa la nueva versión (commit ${sha}) antes de instalarla.`
+            : 'El repositorio cambió desde que lo revisaste. Leyendo la nueva versión…',
         nothingToInstall: 'Este paquete no tiene nada que instalar aquí.'
       }
     },

@@ -37,6 +37,10 @@ export const jaPluginSettings = {
       versionLabel: 'バージョン',
       reviewedPin: sha => (sha ? `レビュー済みのピン ${sha}` : 'レビュー済みのピン'),
       latestCommit: '最新のコミット',
+      sourceMoved: sha =>
+        sha
+          ? `レビュー後にリポジトリが変更されました。インストールする前に新しいバージョン（コミット ${sha}）を確認してください。`
+          : 'レビュー後にリポジトリが変更されました。新しいバージョンを読み込んでいます…',
       nothingToInstall: 'このパッケージにはここでインストールするものがありません。'
     }
   }

@@ -262,7 +262,7 @@ describe('installDesktopPluginFromGit', () => {
     expect(fs.readFileSync(path.join(appRoot, result.pluginName!, 'panel.js'), 'utf8')).toBe('reviewed\n')
 
     const refused = await installDesktopPluginFromGit('git', pathToFileURL(repo).href, appRoot, true, 'f'.repeat(40))
-    expect(refused.ok).toBe(false)
+    expect(refused).toMatchObject({ ok: false, sourceMoved: true })
     expect(refused.error).toContain('the source may have changed since you reviewed it')
     expect(fs.readFileSync(path.join(appRoot, result.pluginName!, 'panel.js'), 'utf8')).toBe('reviewed\n')
   })

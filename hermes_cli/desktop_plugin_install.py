@@ -112,7 +112,7 @@ def install_desktop_plugin(identifier: str, *, ref: Optional[str], catalog_name:
             # annotated-tag pin names the tag object, and only its peeled commit is what the dialog read.
             head = pc._clone_plugin_repo(clone, git_url, catalog_sha or sha, subdir)
             if head != sha:
-                raise pc.PluginOperationError(
+                raise pc.PluginSourceMoved(
                     "The catalog's reviewed commit changed since the dialog read it; inspect it again.")
             # Nothing reads a plugin's Git metadata, and Git's read-only object files would make the
             # published folder one that Windows cannot delete.
@@ -136,7 +136,7 @@ def install_desktop_plugin(identifier: str, *, ref: Optional[str], catalog_name:
                     return _failure(f"Desktop plugin '{folder}' already exists. Enable force reinstall to replace it.")
                 halves.publish_desktop_tree(source_dir, target, marker)
     except pc.PluginOperationError as exc:
-        return _failure(str(exc))
+        return {**_failure(str(exc)), **({"source_moved": True} if isinstance(exc, pc.PluginSourceMoved) else {})}
     except OSError as exc:
         return _failure(f"Could not install the desktop plugin: {exc}")
 

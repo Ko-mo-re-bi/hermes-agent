@@ -372,9 +372,9 @@ def _clone_at_reviewed_commit(tmp_clone: Path, git_url: str, requested_revision:
             "Reinstall it with that pin, or re-open the install dialog.", failure_class="already_installed")
     head = _pc()._clone_plugin_repo(tmp_clone, git_url, requested_revision, subdir)
     if head != sha:
-        raise _pc().PluginOperationError(
+        raise _pc().PluginSourceMoved(
             f"The source changed since you reviewed it: it is now at commit {head[:12]}, not {sha[:12]}. "
-            "Re-open the install dialog to review the new version.", failure_class="clone_failed")
+            "Re-open the install dialog to review the new version.")
     return head
 
 
@@ -861,7 +861,7 @@ def _place_tree(entry, identifier: str, *, force: bool, ref: Optional[str], assu
     except _pc().PluginScanBlocked as exc:
         return scan_blocked_result(exc)
     except _pc().PluginOperationError as exc:
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": str(exc), **({"source_moved": True} if isinstance(exc, _pc().PluginSourceMoved) else {})}
 
 
 def _enable_placed(installed_name: str, deps, step: Callable[[InstallPhase], None]) -> Optional[dict]:

@@ -1754,6 +1754,12 @@ def _plugins_toggle(rid, params):
         "name": key, "plugin": row}, key))
 
 
+def _source_moved_data(result: dict) -> dict | None:
+    """The structured marker of an install refused because the source left the reviewed commit: the
+    client re-inspects on ``reason``, never on the message, which echoes text a git server controls."""
+    return {"reason": "source_moved"} if result.get("source_moved") else None
+
+
 def _plugins_install(rid, params):
     # ``catalog_name`` alone installs a curated entry at its pinned SHA (resolved server-side, kill list
     # enforced, no bypass) — same contract as the dashboard endpoint.
@@ -1767,7 +1773,7 @@ def _plugins_install(rid, params):
         ref=str(params.get("ref") or "").strip() or None,
         inspected_sha=str(params.get("inspected_sha") or "").strip() or None)
     if not result.get("ok"):
-        return _err(rid, 5026, result.get("error") or "install failed")
+        return _err(rid, 5026, result.get("error") or "install failed", data=_source_moved_data(result))
     return _ok(rid, _with_activation(result, str(result.get("plugin_name") or "")) if result.get("enabled") else result)
 
 
@@ -1792,7 +1798,9 @@ def _plugins_install_desktop(rid, params):
         return _err(rid, 4019, "plugins.manage install_desktop requires 'identifier', 'repo', or 'catalog_name'")
     result = _tools_mod("hermes_cli.desktop_plugin_install").install_desktop_plugin(
         ident, ref=params.get("ref"), catalog_name=catalog_name or None, force=bool(params.get("force")))
-    return _ok(rid, result) if result.get("ok") else _err(rid, 5026, result.get("error") or "desktop install failed")
+    if not result.get("ok"):
+        return _err(rid, 5026, result.get("error") or "desktop install failed", data=_source_moved_data(result))
+    return _ok(rid, result)
 
 
 def _plugins_remove_desktop(rid, params):
