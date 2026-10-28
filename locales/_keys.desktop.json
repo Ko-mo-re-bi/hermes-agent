@@ -4048,6 +4048,7 @@
     "settings.plugins.installModal.serverNotConnected",
     "settings.plugins.installModal.skillsReady",
     "settings.plugins.installModal.sourceHeading",
+    "settings.plugins.installModal.sourceMoved",
     "settings.plugins.installModal.title",
     "settings.plugins.installModal.toolsConnected",
     "settings.plugins.installModal.unverified",
