@@ -2,7 +2,8 @@
 
 限定実装。実Slack・本番未適用、Phase1全体は未完了。
 公開用の検証範囲と残件は `PHASE1_TEST_REPORT.md` を参照。
-正規runner・既存承認回帰は NOT RUN / BLOCKED。ローカルの途中経過ログは本PRに含めない。
+正規runnerはMac peerから81件・終了0の報告あり（原本ログ未取得）。詳細と制限は下記report参照。
+同梱の限定smokeは `phase1_smoke.py`。実装と既存pytestはMac試験対象の挙動を保つため変更しない。
 
 既存Socket receiver/clientのHomeイベントとページ操作だけを利用する。
 Messages、承認handler、guard、認証・設定・サービス・実DBは変更しない。
@@ -61,3 +62,15 @@ adapter追加箇所と新規ファイルを戻す。DB削除・復元・外部�
 読取はadapter内の全viewer共通で最大4 worker。同viewerは1 active＋最大1 pending。
 キャンセル時も実thread終了までviewer/global枠を保持し、取消要求からはpublishしない。
 URL button `hermes_observe_thread` はACKのみで、読取・更新・URL呼出をしない。
+
+再現コマンド（checkout rootから、Python 3.12以上、stdlibのみ）：
+
+```sh
+python -B plugins/platforms/slack/phase1_smoke.py --fixture-root /path/to/your/scratch-dir
+```
+
+`--fixture-root` は既存scratch directoryを明示する必須引数。moduleはcheckout相対で解決する。
+fixtureはその配下の一意なTemporaryDirectory内で作成・削除し、同じrun IDのdirectoryに
+stdout/stderr、exit code、source SHA-256を保存する（証跡directoryは残す）。
+実home/profile/auth/state/実DBにはアクセスしない。pytest/conftestは変更・代用せず、
+10ms timerを使う狭いstandalone smokeであり正規回帰や実Slack検証の代替ではない。
