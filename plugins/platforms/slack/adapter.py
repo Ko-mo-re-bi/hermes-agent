@@ -1685,6 +1685,10 @@ class SlackAdapter(BasePlatformAdapter):
             self._app.action(_action_id)(self._handle_approval_action)
         for _action_id in self._CONFIRM_CHOICES:
             self._app.action(_action_id)(self._handle_slash_confirm_action)
+        from plugins.platforms.slack.coordination_home import bind as bind_home
+        for action_id in ("hermes_observe_page_prev", "hermes_observe_page_next"):
+            self._app.action(action_id)(bind_home(self).action)
+        self._app.action("hermes_observe_thread")(bind_home(self).thread_action)
         self._app.action("hermes_feedback")(self._handle_feedback_action)
         # Clarify buttons (tools/clarify_gateway.py); indexed action IDs because
         # Block Kit requires unique IDs within an actions block.
@@ -3819,6 +3823,10 @@ class SlackAdapter(BasePlatformAdapter):
 
     async def _handle_app_home_opened(self, event: dict, body: Optional[dict] = None) -> None:
         """Handle Slack Agent DM-open lifecycle events without producing replies."""
+        if event.get("tab") == "home":
+            from plugins.platforms.slack.coordination_home import bind
+            await bind(self).opened(event, body)
+            return
         if event.get("tab") != "messages":
             return
         channel_id = event.get("channel") or event.get("channel_id") or ""
