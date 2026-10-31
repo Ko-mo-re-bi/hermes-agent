@@ -20,7 +20,7 @@ jobs:
       - name: Prepare pinned test environment
         uses: ./.github/actions/setup-pm
         with:
-          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web"]'
           test-environment: 'true'
       - name: Canonical targeted regression
         env:
