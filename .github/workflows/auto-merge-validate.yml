@@ -1,0 +1,46 @@
+name: PR Auto Merge Validation
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout untrusted PR in a read-only job
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Static inspection and whitespace
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import ast,json,pathlib,subprocess
+          subprocess.run(['git','diff','--check','HEAD^1','HEAD'],check=True)
+          files=subprocess.check_output(['git','diff','--name-only','HEAD^1','HEAD'],text=True).splitlines()
+          for filename in files:
+              p=pathlib.Path(filename)
+              if not p.is_file(): continue
+              if p.suffix=='.py': ast.parse(p.read_text(encoding='utf-8'),filename=filename)
+              elif p.suffix in ('.js','.mjs','.cjs'): subprocess.run(['node','--check',filename],check=True)
+              elif p.suffix=='.json': json.loads(p.read_text(encoding='utf-8'))
+              elif p.suffix=='.sh': subprocess.run(['bash','-n',filename],check=True)
+          print('Static inspection complete for',len(files),'changed files')
+          PY
+      - name: Security scan (vulnerabilities, secrets, misconfiguration)
+        uses: aquasecurity/trivy-action@0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          format: table
+      - name: Targeted canonical gateway tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/run_tests.sh tests/gateway/test_slack_approval_buttons.py tests/gateway/test_slack_plugin_action_handlers.py
