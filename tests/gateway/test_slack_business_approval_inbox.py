@@ -124,7 +124,7 @@ def test_home_rejects_wrong_team_actor_and_missing_view(approval):
 
 
 def test_failed_dm_post_retries_without_marking_delivered(approval):
-    handler, inbox, client, _ = approval
+    _, inbox, client, _ = approval
     client.chat_postMessage.side_effect = RuntimeError("temporary")
     run(inbox.sweep())
     assert inbox.delivered() == []
@@ -135,7 +135,7 @@ def test_failed_dm_post_retries_without_marking_delivered(approval):
 
 
 def test_invalid_slack_response_never_marks_delivered(approval):
-    handler, inbox, client, _ = approval
+    _, inbox, client, _ = approval
     client.chat_postMessage.return_value = {"ok": False, "error": "not_in_channel"}
     run(inbox.sweep())
     assert inbox.delivered() == []
@@ -329,7 +329,7 @@ def test_default_opt_out_preserves_existing_actions_without_new_surfaces(approva
 
 
 def test_dm_and_home_offer_canonical_request_details_link(approval):
-    handler, inbox, client, _ = approval
+    _, inbox, client, _ = approval
     run(inbox.sweep())
     dm_blocks = client.chat_postMessage.call_args.kwargs['blocks']
     assert any('詳細' in b.get('text', {}).get('text', '') and
