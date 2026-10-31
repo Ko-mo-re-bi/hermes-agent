@@ -229,7 +229,6 @@ def test_existing_periodic_sweep_automatically_queues_dm(approval):
 def test_after_decision_replay_does_not_issue_second_dm(approval):
     handler, inbox, client, _ = approval
     run(handler.sweep())
-    row=handler.ledger.pending()[0]
     committed=handler.ledger.decide(team="TWORK",channel=CHANNEL,message_ts="100.1",
                                      user=APPROVER,choice="deny")
     run(handler.render(committed))
