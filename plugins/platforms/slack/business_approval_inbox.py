@@ -199,7 +199,7 @@ class ApprovalInbox:
                         or not _TS.fullmatch(ts) or result.get("channel", dm_channel) != dm_channel):
                     raise ValueError("Slack DM acknowledgement missing or channel mismatch")
                 self._finish(row["request_id"], token, dm_channel, ts)
-            except Exception as exc:
+            except Exception as exc:  # health: allow BLE001 -- external Slack API faults must defer delivery without logging sensitive payloads
                 self._retry(row["request_id"], token, now)
                 LOG.warning("Approval DM delivery deferred: %s", type(exc).__name__)
         # A decision can commit just before the gateway stops. Repair DM UI on
@@ -337,7 +337,7 @@ class ApprovalInbox:
                 user_id=APPROVER, view={"type": "home", "blocks": blocks}))
             if result.get("ok") is not True:
                 raise ValueError("App Home publish rejected")
-        except Exception as exc:
+        except Exception as exc:  # health: allow BLE001 -- optional Slack UI failure must not leak request payloads
             LOG.warning("Approval App Home publish failed: %s", type(exc).__name__)
 
     async def after_decision(self, row):
@@ -360,6 +360,6 @@ class ApprovalInbox:
                             db.execute("UPDATE business_approval_dm_notices SET updated_at=? "
                                        "WHERE request_id=? AND profile=? AND state='sent'",
                                        (time.time(), row["request_id"], self.ledger.profile))
-                except Exception as exc:
+                except Exception as exc:  # health: allow BLE001 -- preserve committed decision when optional Slack update fails
                     LOG.warning("Approval DM state refresh failed: %s", type(exc).__name__)
         await self.publish_home(row["team"])
