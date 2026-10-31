@@ -215,7 +215,7 @@ class Home:
                     return deepcopy((board, boards[board], raw.get("approval_db"), grant.get("channels", [])))
         return None
 
-    async def opened(self, event, body=None, page=0):
+    async def opened(self, event, body=None, page=0, approval_page=0):
         team = self.adapter._event_team_id(event, body)
         user = event.get("user")
         settings = self.settings(team, user)
@@ -244,9 +244,26 @@ class Home:
                     or time.monotonic() < self.cooldown.get(team, 0)):
                 return
             board = settings[0]
+            view = render(data, board, page, approval)
+            business = getattr(self.adapter, "_business_approval", None)
+            inbox = getattr(business, "inbox", None)
+            if (user == "U0C79V9C6N6" and inbox is not None
+                    and inbox.home_enabled and inbox._client(team) is client):
+                try:
+                    approval_blocks = await asyncio.to_thread(
+                        inbox.home_blocks, team, page=approval_page, integrated=True)
+                except (ValueError, OSError, sqlite3.Error):
+                    approval_blocks = []
+                    logger.warning("Combined Home approvals unavailable")
+                if (self.settings(team, user) != settings
+                        or self.adapter._team_clients.get(team) is not client):
+                    return
+                if approval_blocks:
+                    # Slack Home permits at most 100 blocks. Prioritize decisions.
+                    room = max(0, 100 - len(approval_blocks))
+                    view["blocks"] = approval_blocks + view["blocks"][:room]
             try:
-                await client.views_publish(user_id=user, view=render(
-                    data, board, page, approval))
+                await client.views_publish(user_id=user, view=view)
             except Exception as exc:
                 response = getattr(exc, "response", None)
                 if getattr(response, "status_code", None) == 429:
