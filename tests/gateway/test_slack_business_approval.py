@@ -465,7 +465,7 @@ def _display_doc(record, **display):
 
 
 def test_issuer_document_accepts_optional_display_fields(issuer):
-    root, path, record = issuer
+    _, path, record = issuer
     path.write_text(_display_doc(record, title='在庫棚卸しの実施',
                                  outcome='棚卸し結果が確定する', scope='本番データの変更なし'))
     parsed = parse_issuer_document(path.read_text())
@@ -475,7 +475,7 @@ def test_issuer_document_accepts_optional_display_fields(issuer):
 
 
 def test_issuer_document_rejects_bad_display_fields(issuer):
-    root, path, record = issuer
+    _, _, record = issuer
     with pytest.raises(ValueError):
         parse_issuer_document(_display_doc(record, summary='未定義の項目'))
     with pytest.raises(ValueError):

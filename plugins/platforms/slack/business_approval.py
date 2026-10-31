@@ -166,7 +166,8 @@ class Ledger:
 
     def register(self, *, hd: str, team: str, channel: str, message_ts: str,
                  thread_ts: str, issued: float, requester: str, now=None,
-                 title: str = None, outcome: str = None, scope: str = None):
+                 title: str | None = None, outcome: str | None = None,
+                 scope: str | None = None):
         now = time.time() if now is None else now
         if (not re.fullmatch(r"HD-[A-Za-z0-9-]+", hd) or not team or not requester
                 or channel != CHANNEL or not thread_ts
