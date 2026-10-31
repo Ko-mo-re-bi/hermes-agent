@@ -69,10 +69,27 @@ def _buttons(row, *, home=False):
     actions = HOME_ACTIONS if home else DM_ACTIONS
     return {"type": "actions", "elements": [
         {"type": "button", "action_id": action_id,
-         "text": {"type": "plain_text", "text": "承認" if choice == "approve" else "差戻し"},
+         "text": {"type": "plain_text", "text": "承認する" if choice == "approve" else "差し戻す"},
          "style": "primary" if choice == "approve" else "danger",
          "value": row["request_id"]}
         for action_id, choice in actions.items()]}
+
+
+# Display text comes only from the verified issuer record. A field the issuer
+# did not declare is shown as an explicit marker, never filled in by guessing;
+# the canonical request link below the summary leads to the original request.
+_NOT_STATED = "（発行原本に記載なし）"
+
+
+def _display_value(row, key):
+    value = row.get(key) if isinstance(row, dict) else None
+    return value if isinstance(value, str) and value else _NOT_STATED
+
+
+def _summary_lines(row):
+    return (f"作業名: {_display_value(row, 'title')}\n"
+            f"承認後の結果: {_display_value(row, 'outcome')}\n"
+            f"影響範囲: {_display_value(row, 'scope')}")
 
 
 class ApprovalInbox:
@@ -185,7 +202,8 @@ class ApprovalInbox:
                 if time.time() >= row["expires"]:
                     self._retry(row["request_id"], token, now)
                     continue
-                blocks = [_section(f"承認依頼: {row['hd']}\n依頼元: {row['requester']}\n"
+                blocks = [_section(f"承認依頼: {row['hd']}\n{_summary_lines(row)}\n"
+                                   f"依頼元: {row['requester']}\n"
                                    f"期限: {_deadline(row)}\n判断のみ・自動実行なし"),
                           _buttons(row)]
                 details = _request_details(row)
@@ -301,7 +319,10 @@ class ApprovalInbox:
         blocks = [_section(f"業務承認 / 未処理 {len(rows)}件 / {page+1}ページ"),
                   _section("承認・差戻しは業務判断のみ。実行権限は付与されません。")]
         for row in rows[page * page_size:(page+1) * page_size]:
-            blocks.extend((_section(f"{row['hd']} / 依頼元: {row['requester']} / 期限: {_deadline(row)}"),
+            blocks.extend((_section(f"{row['hd']} / {_display_value(row, 'title')}\n"
+                                     f"承認後の結果: {_display_value(row, 'outcome')} / "
+                                     f"影響範囲: {_display_value(row, 'scope')}\n"
+                                     f"依頼元: {row['requester']} / 期限: {_deadline(row)}"),
                            _buttons(row, home=True)))
             details = _request_details(row)
             if details is not None:

@@ -29,21 +29,33 @@ OUTBOX_ERROR_AFTER = 3
 ISSUER_FIELDS = {"hd", "team", "profile", "channel", "thread_ts", "message_ts",
                  "issued", "expires", "requester", "approver", "automatic_execution"}
 
+# Optional issuer-declared display text. Shown verbatim in the DM and App Home
+# so the approver can judge without guessing; never parsed for meaning and
+# never required, so issuer records written before these fields existed
+# remain valid. Absent fields render as an explicit "not stated" marker.
+ISSUER_OPTIONAL_FIELDS = {"title", "outcome", "scope"}
+DISPLAY_FIELDS = ("title", "outcome", "scope")
+DISPLAY_FIELD_MAX = 200
+
 
 def parse_issuer_document(text):
     """Parse a dedicated issuer record: exactly one key: value line per field."""
     record = {}
     for line in text.splitlines():
         key, separator, value = line.partition(":")
-        if not separator or key not in ISSUER_FIELDS or key in record or not value.strip():
+        if (not separator or key not in ISSUER_FIELDS | ISSUER_OPTIONAL_FIELDS
+                or key in record or not value.strip()):
             raise ValueError("Invalid issuer record")
         record[key] = value.strip()
-    if record.keys() != ISSUER_FIELDS:
+    if not ISSUER_FIELDS.issubset(record.keys()):
         raise ValueError("Incomplete issuer record")
     for key in ("issued", "expires"):
         record[key] = float(record[key])
         if not math.isfinite(record[key]):
             raise ValueError("Invalid issuer timestamp")
+    for key in ISSUER_OPTIONAL_FIELDS & record.keys():
+        if len(record[key]) > DISPLAY_FIELD_MAX:
+            raise ValueError("Issuer display field too long")
     return record
 
 
@@ -106,19 +118,23 @@ def initialize_database(path):
             profile TEXT NOT NULL, channel TEXT NOT NULL, message_ts TEXT NOT NULL,
             thread_ts TEXT NOT NULL, issued REAL NOT NULL, expires REAL NOT NULL,
             requester TEXT NOT NULL, decision TEXT, decided REAL, actor TEXT, source TEXT,
+            title TEXT, outcome TEXT, scope TEXT,
             UNIQUE(profile, hd), UNIQUE(profile, team, channel, message_ts))''')
         migrate(db)
 
 
 def migrate(db):
     """Add columns introduced after the first schema; existing rows keep NULL."""
-    def present():
-        return "outbox_written_at" in {row[1] for row in db.execute("PRAGMA table_info(cards)")}
-    if not present():
+    added_columns = (("outbox_written_at", "REAL"),) + tuple(
+        (field, "TEXT") for field in DISPLAY_FIELDS)
+    for column, kind in added_columns:
+        if column in {row[1] for row in db.execute("PRAGMA table_info(cards)")}:
+            continue
         try:
-            db.execute("ALTER TABLE cards ADD COLUMN outbox_written_at REAL")
+            db.execute(f"ALTER TABLE cards ADD COLUMN {column} {kind}")
         except sqlite3.OperationalError:
-            if not present():  # a concurrent process may have added it first
+            # A concurrent process may have added the column first.
+            if column not in {row[1] for row in db.execute("PRAGMA table_info(cards)")}:
                 raise
 
 
@@ -149,7 +165,8 @@ class Ledger:
         return db
 
     def register(self, *, hd: str, team: str, channel: str, message_ts: str,
-                 thread_ts: str, issued: float, requester: str, now=None):
+                 thread_ts: str, issued: float, requester: str, now=None,
+                 title: str = None, outcome: str = None, scope: str = None):
         now = time.time() if now is None else now
         if (not re.fullmatch(r"HD-[A-Za-z0-9-]+", hd) or not team or not requester
                 or channel != CHANNEL or not thread_ts
@@ -157,17 +174,28 @@ class Ledger:
                 or not re.fullmatch(r"\d+\.\d+", thread_ts)
                 or not math.isfinite(issued) or not issued <= now < issued + 86400):
             raise ValueError("Invalid registration or issuance time")
+        display = {"title": title, "outcome": outcome, "scope": scope}
+        for value in display.values():
+            if value is not None and (not isinstance(value, str) or not value.strip()
+                                      or len(value) > DISPLAY_FIELD_MAX
+                                      or "\n" in value or "\r" in value):
+                raise ValueError("Invalid issuer display field")
         registration = dict(hd=hd, team=team, profile=self.profile, channel=channel,
                             message_ts=message_ts, thread_ts=thread_ts, issued=issued,
                             expires=issued + 86400, requester=requester)
+        for key, value in display.items():
+            if value is not None:
+                registration[key] = value
         # Only the local issuer record establishes registration provenance.
         if self.verifier is None or self.verifier(registration) is not True:
             raise ValueError("Verified work-relay registration is required")
         with self.connect() as db:
             db.execute("INSERT INTO cards (request_id, hd, team, profile, channel, message_ts, "
-                       "thread_ts, issued, expires, requester) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                       "thread_ts, issued, expires, requester, title, outcome, scope) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                        ("business-" + uuid.uuid4().hex, hd, team, self.profile, channel,
-                        message_ts, thread_ts, issued, issued + 86400, requester))
+                        message_ts, thread_ts, issued, issued + 86400, requester,
+                        title, outcome, scope))
 
     def decide(self, *, team, channel, message_ts, user, choice, hd=None, now=None, source="button"):
         if (user != APPROVER or channel != CHANNEL or choice not in CHOICES.values() or not team
@@ -260,9 +288,14 @@ class BusinessApproval:
 
     @staticmethod
     def display_text(row):
+        try:
+            title = row['title']
+        except (KeyError, IndexError):
+            title = None
+        subject = f"{row['hd']}（{title}）" if title else row['hd']
         if row['decision'] == 'expired':
-            return f"{row['hd']}: expired（期限切れ・未決定）\n依頼元: {row['requester']}（業務判断のみ・実行権限なし）"
-        return (f"{row['hd']}: {row['decision']} / <@{APPROVER}>\n"
+            return f"{subject}: expired（期限切れ・未決定）\n依頼元: {row['requester']}（業務判断のみ・実行権限なし）"
+        return (f"{subject}: {row['decision']} / <@{APPROVER}>\n"
                 f"依頼元: {row['requester']}（業務判断のみ・実行権限なし）")
 
     def receipt_path(self, row):
@@ -401,6 +434,8 @@ def main(argv=None):
             for field in ('hd', 'team', 'channel', 'message-ts', 'thread-ts', 'requester'):
                 command_parser.add_argument('--' + field, required=True)
             command_parser.add_argument('--issued', required=True, type=float)
+            for field in DISPLAY_FIELDS:
+                command_parser.add_argument('--' + field)
     args = parser.parse_args(argv)
     try:
         verifier = issuer_verifier(args.issuer_root) if args.command == 'register' else None
@@ -408,6 +443,9 @@ def main(argv=None):
         if args.command == 'register':
             registration = {key: getattr(args, key) for key in
                             ('hd', 'team', 'channel', 'message_ts', 'thread_ts', 'issued', 'requester')}
+            for field in DISPLAY_FIELDS:
+                if getattr(args, field) is not None:
+                    registration[field] = getattr(args, field)
             # Verify before initialization so rejected evidence cannot create a trust store.
             evidence = dict(registration, profile=args.profile, expires=args.issued + 86400)
             if verifier(evidence) is not True:

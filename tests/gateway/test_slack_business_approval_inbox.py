@@ -401,3 +401,45 @@ def test_no_shared_home_publish_without_exact_observation_grant(approval, tmp_pa
     run(inbox.publish_home("TWORK"))
     client.views_publish.assert_not_called()
 
+
+
+def test_dm_and_home_show_issuer_display_fields(approval):
+    handler, inbox, client, _ = approval
+    issuer = Ledger(handler.ledger.path, profile='koumei', verifier=lambda x: True)
+    now = time.time()
+    issuer.register(hd="HD-20261031-002", team="TWORK", channel=CHANNEL,
+                    message_ts="100.2", thread_ts="99.2", issued=now-2,
+                    requester="joushou", title="在庫棚卸しの実施",
+                    outcome="棚卸し結果が確定する", scope="本番データの変更なし",
+                    now=now-2)
+    run(inbox.sweep())
+    dm_texts = [c.kwargs['blocks'][0]['text']['text']
+                for c in client.chat_postMessage.call_args_list]
+    target = next(t for t in dm_texts if 'HD-20261031-002' in t)
+    assert '作業名: 在庫棚卸しの実施' in target
+    assert '承認後の結果: 棚卸し結果が確定する' in target
+    assert '影響範囲: 本番データの変更なし' in target
+    target_blocks = next(c.kwargs['blocks'] for c in client.chat_postMessage.call_args_list
+                         if 'HD-20261031-002' in c.kwargs['blocks'][0]['text']['text'])
+    labels = {e['text']['text'] for b in target_blocks if b['type'] == 'actions'
+              for e in b['elements']}
+    assert labels == {'承認する', '差し戻す'}
+    run(inbox.home_opened({'user': APPROVER, 'tab': 'home', 'team_id': 'TWORK'}, {}))
+    home_text = ' '.join(b.get('text', {}).get('text', '') for b in
+                         client.views_publish.call_args.kwargs['view']['blocks'])
+    assert '在庫棚卸しの実施' in home_text
+    assert '棚卸し結果が確定する' in home_text
+    assert '本番データの変更なし' in home_text
+
+
+def test_dm_and_home_mark_missing_display_fields(approval):
+    _, inbox, client, _ = approval
+    run(inbox.sweep())
+    dm_blocks = client.chat_postMessage.call_args.kwargs['blocks']
+    dm_text = dm_blocks[0]['text']['text']
+    assert '作業名: （発行原本に記載なし）' in dm_text
+    assert '承認後の結果: （発行原本に記載なし）' in dm_text
+    assert '影響範囲: （発行原本に記載なし）' in dm_text
+    labels = {e['text']['text'] for b in dm_blocks if b['type'] == 'actions'
+              for e in b['elements']}
+    assert labels == {'承認する', '差し戻す'}

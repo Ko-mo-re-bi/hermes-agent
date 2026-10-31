@@ -456,3 +456,79 @@ def test_sweeper_task_runs_at_start_and_stops(ledger, monkeypatch):
         assert task.done() and handler.sweeper is None
     asyncio.run(exercise())
     assert ledger.results()[0]['decision'] == 'expired'
+
+
+def _display_doc(record, **display):
+    merged = dict(record)
+    merged.update(display)
+    return ''.join(f'{key}: {value}\n' for key, value in merged.items())
+
+
+def test_issuer_document_accepts_optional_display_fields(issuer):
+    root, path, record = issuer
+    path.write_text(_display_doc(record, title='在庫棚卸しの実施',
+                                 outcome='棚卸し結果が確定する', scope='本番データの変更なし'))
+    parsed = parse_issuer_document(path.read_text())
+    assert parsed['title'] == '在庫棚卸しの実施'
+    assert parsed['outcome'] == '棚卸し結果が確定する'
+    assert parsed['scope'] == '本番データの変更なし'
+
+
+def test_issuer_document_rejects_bad_display_fields(issuer):
+    root, path, record = issuer
+    with pytest.raises(ValueError):
+        parse_issuer_document(_display_doc(record, summary='未定義の項目'))
+    with pytest.raises(ValueError):
+        parse_issuer_document(_display_doc(record, title='a') + 'title: b\n')
+    with pytest.raises(ValueError):
+        parse_issuer_document(_display_doc(record, title='x' * 201))
+    with pytest.raises(ValueError):
+        parse_issuer_document(_display_doc(record, title='ok').replace('requester: joushou\n', ''))
+
+
+def test_display_fields_must_match_issuer_document(issuer):
+    root, path, record = issuer
+    path.write_text(_display_doc(record, title='在庫棚卸しの実施'))
+    registration = {key: value for key, value in record.items()
+                    if key not in ('approver', 'automatic_execution')}
+    assert issuer_verifier(root)(registration) is False
+    assert issuer_verifier(root)(dict(registration, title='別の作業')) is False
+    assert issuer_verifier(root)(dict(registration, title='在庫棚卸しの実施')) is True
+
+
+def test_register_stores_display_fields(issuer, tmp_path, monkeypatch):
+    root, path, record = issuer
+    path.write_text(_display_doc(record, title='在庫棚卸しの実施',
+                                 outcome='棚卸し結果が確定する', scope='本番データの変更なし'))
+    monkeypatch.setattr('plugins.platforms.slack.business_approval.time.time', lambda: 1001)
+    db = str(tmp_path / 'display.sqlite')
+    initialize_database(db)
+    store = Ledger(db, profile='appdev', verifier=issuer_verifier(root))
+    store.register(hd='HD-123', team='T1', channel=CHANNEL, message_ts='100.1',
+                   thread_ts='99.1', issued=1000.0, requester='joushou',
+                   title='在庫棚卸しの実施', outcome='棚卸し結果が確定する',
+                   scope='本番データの変更なし', now=1001)
+    row = store.pending(now=1001)[0]
+    assert row['title'] == '在庫棚卸しの実施'
+    assert row['outcome'] == '棚卸し結果が確定する'
+    assert row['scope'] == '本番データの変更なし'
+
+
+def test_migration_adds_display_columns_and_keeps_existing_rows(tmp_path):
+    tmp_path.chmod(0o700)
+    path = tmp_path / 'legacy.sqlite'
+    path.touch(mode=0o600)
+    with sqlite3.connect(path) as db:
+        db.execute('''CREATE TABLE cards (
+            request_id TEXT PRIMARY KEY, hd TEXT NOT NULL, team TEXT NOT NULL,
+            profile TEXT NOT NULL, channel TEXT NOT NULL, message_ts TEXT NOT NULL,
+            thread_ts TEXT NOT NULL, issued REAL NOT NULL, expires REAL NOT NULL,
+            requester TEXT NOT NULL, decision TEXT, decided REAL, actor TEXT, source TEXT,
+            UNIQUE(profile, hd), UNIQUE(profile, team, channel, message_ts))''')
+        db.execute("INSERT INTO cards VALUES ('business-old', 'HD-9', 'T1', 'appdev', ?, '100.1', "
+                   "'99.1', 1000, 87400, 'joushou', NULL, NULL, NULL, NULL)", (CHANNEL,))
+    initialize_database(str(path))
+    store = Ledger(str(path), profile='appdev')
+    row = store.pending(now=1001)[0]
+    assert row['hd'] == 'HD-9'
+    assert row['title'] is None and row['outcome'] is None and row['scope'] is None
