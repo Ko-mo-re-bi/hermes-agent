@@ -76,7 +76,7 @@ def issuer_verifier(root):
             check_owned(root, directory=True)
             path = root / (registration["hd"] + ".md")
             descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
+            with os.fdopen(descriptor, "r", encoding="utf-8-sig") as stream:
                 info = os.fstat(stream.fileno())
                 if (not stat.S_ISREG(info.st_mode) or info.st_uid != _effective_uid()
                         or stat.S_IMODE(info.st_mode) != 0o600):
