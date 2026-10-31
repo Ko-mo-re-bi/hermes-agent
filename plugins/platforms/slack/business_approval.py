@@ -29,10 +29,13 @@ OUTBOX_ERROR_AFTER = 3
 ISSUER_FIELDS = {"hd", "team", "profile", "channel", "thread_ts", "message_ts",
                  "issued", "expires", "requester", "approver", "automatic_execution"}
 
-# Optional issuer-declared display text. Shown verbatim in the DM and App Home
-# so the approver can judge without guessing; never parsed for meaning and
-# never required, so issuer records written before these fields existed
-# remain valid. Absent fields render as an explicit "not stated" marker.
+# Issuer-declared display text. Shown verbatim in the DM and App Home
+# so the approver can judge without guessing; never parsed for meaning.
+# Parsing stays optional so issuer records written before these fields
+# existed remain readable, and existing DB rows keep their NULL values.
+# New registrations, however, must declare all three fields: Ledger.register
+# and the register CLI reject any of them missing. Rows already stored
+# without them render as an explicit "not stated" marker.
 ISSUER_OPTIONAL_FIELDS = {"title", "outcome", "scope"}
 DISPLAY_FIELDS = ("title", "outcome", "scope")
 DISPLAY_FIELD_MAX = 200
@@ -190,6 +193,14 @@ class Ledger:
         # Only the local issuer record establishes registration provenance.
         if self.verifier is None or self.verifier(registration) is not True:
             raise ValueError("Verified work-relay registration is required")
+        # New registrations must carry the full display summary, so the
+        # approver never faces a card whose contents are unknown. This gate
+        # applies only here, at registration time: rows stored before the
+        # fields existed keep NULLs and remain readable and displayable.
+        missing = [key for key, value in display.items() if value is None]
+        if missing:
+            raise ValueError("New registration requires issuer display fields: "
+                             + ", ".join(missing))
         with self.connect() as db:
             db.execute("INSERT INTO cards (request_id, hd, team, profile, channel, message_ts, "
                        "thread_ts, issued, expires, requester, title, outcome, scope) "
@@ -436,7 +447,7 @@ def main(argv=None):
                 command_parser.add_argument('--' + field, required=True)
             command_parser.add_argument('--issued', required=True, type=float)
             for field in DISPLAY_FIELDS:
-                command_parser.add_argument('--' + field)
+                command_parser.add_argument('--' + field, required=True)
     args = parser.parse_args(argv)
     try:
         verifier = issuer_verifier(args.issuer_root) if args.command == 'register' else None

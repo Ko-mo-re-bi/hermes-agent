@@ -202,7 +202,8 @@ class ApprovalInbox:
                 if time.time() >= row["expires"]:
                     self._retry(row["request_id"], token, now)
                     continue
-                blocks = [_section(f"承認依頼: {row['hd']}\n{_summary_lines(row)}\n"
+                blocks = [_section(f"{_summary_lines(row)}\n"
+                                   f"案件ID: {row['hd']}\n"
                                    f"依頼元: {row['requester']}\n"
                                    f"期限: {_deadline(row)}\n判断のみ・自動実行なし"),
                           _buttons(row)]
@@ -210,7 +211,8 @@ class ApprovalInbox:
                 if details is not None:
                     blocks.append(details)
                 result = _data(await client.chat_postMessage(
-                    channel=dm_channel, text=f"承認依頼 {row['hd']}", blocks=blocks,
+                    channel=dm_channel,
+                    text=f"承認依頼: {_display_value(row, 'title')}（{row['hd']}）", blocks=blocks,
                     client_msg_id=str(uuid.uuid5(uuid.NAMESPACE_URL, row["request_id"]))))
                 ts = result.get("ts")
                 if (result.get("ok") is not True or not isinstance(ts, str)
@@ -319,7 +321,8 @@ class ApprovalInbox:
         blocks = [_section(f"業務承認 / 未処理 {len(rows)}件 / {page+1}ページ"),
                   _section("承認・差戻しは業務判断のみ。実行権限は付与されません。")]
         for row in rows[page * page_size:(page+1) * page_size]:
-            blocks.extend((_section(f"{row['hd']} / {_display_value(row, 'title')}\n"
+            blocks.extend((_section(f"作業名: {_display_value(row, 'title')}\n"
+                                     f"案件ID: {row['hd']}\n"
                                      f"承認後の結果: {_display_value(row, 'outcome')} / "
                                      f"影響範囲: {_display_value(row, 'scope')}\n"
                                      f"依頼元: {row['requester']} / 期限: {_deadline(row)}"),
@@ -370,7 +373,8 @@ class ApprovalInbox:
                 if client is None:
                     break
                 try:
-                    text = f"{row['hd']}: {row['decision']}（処理済み・自動実行なし）"
+                    text = (f"作業名: {_display_value(row, 'title')}（{row['hd']}）: "
+                            f"{row['decision']}（処理済み・自動実行なし）")
                     result = _data(await client.chat_update(
                         channel=notice["dm_channel"], ts=notice["dm_ts"],
                         text=text, blocks=[_section(text)]))

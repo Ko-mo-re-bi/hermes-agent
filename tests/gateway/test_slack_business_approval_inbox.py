@@ -21,7 +21,9 @@ def approval(tmp_path):
     now = time.time()
     ledger.register(hd="HD-20261031-001", team="TWORK", channel=CHANNEL,
                     message_ts="100.1", thread_ts="99.1", issued=now-2,
-                    requester="joushou", now=now-2)
+                    requester="joushou", title="承認テスト作業",
+                    outcome="テスト結果が記録される", scope="業務実行なし",
+                    now=now-2)
     client = Mock()
     client.conversations_open = AsyncMock(return_value={"ok": True, "channel": {"id": "D123ABC", "user": APPROVER}})
     client.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "101.2", "channel": "D123ABC"})
@@ -167,7 +169,9 @@ def test_larger_pending_queue_does_not_starve_beyond_first_page(approval):
     for i in range(1, 16):
         issuer.register(hd=f"HD-20261031-{i+1:03}", team="TWORK", channel=CHANNEL,
                         message_ts=f"{200+i}.1", thread_ts="99.1", issued=now-2,
-                        requester="operator", now=now-2)
+                        requester="operator", title="承認テスト作業",
+                        outcome="テスト結果が記録される", scope="業務実行なし",
+                        now=now-2)
     client.chat_postMessage.side_effect = [
         {"ok": True, "ts": f"{1000+i}.1"} for i in range(17)]
     run(inbox.sweep(now=now))
@@ -282,7 +286,9 @@ def test_home_paginates_25_pending_approvals(approval):
     for i in range(24):
         issuer.register(hd=f'HD-20261031-PAGE-{i:02}', team='TWORK', channel=CHANNEL,
                         message_ts=f'{500+i}.1', thread_ts='99.1',
-                        issued=now-2, requester='operator', now=now-2)
+                        issued=now-2, requester='operator', title='承認テスト作業',
+                        outcome='テスト結果が記録される', scope='業務実行なし',
+                        now=now-2)
     run(inbox.home_opened({'user': APPROVER, 'tab': 'home', 'team_id': 'TWORK'}, {}))
     first = client.views_publish.call_args.kwargs['view']
     assert '未処理 25件' in first['blocks'][0]['text']['text']
@@ -416,6 +422,8 @@ def test_dm_and_home_show_issuer_display_fields(approval):
     dm_texts = [c.kwargs['blocks'][0]['text']['text']
                 for c in client.chat_postMessage.call_args_list]
     target = next(t for t in dm_texts if 'HD-20261031-002' in t)
+    assert target.startswith('作業名: 在庫棚卸しの実施')
+    assert target.index('在庫棚卸しの実施') < target.index('HD-20261031-002')
     assert '作業名: 在庫棚卸しの実施' in target
     assert '承認後の結果: 棚卸し結果が確定する' in target
     assert '影響範囲: 本番データの変更なし' in target
@@ -430,10 +438,21 @@ def test_dm_and_home_show_issuer_display_fields(approval):
     assert '在庫棚卸しの実施' in home_text
     assert '棚卸し結果が確定する' in home_text
     assert '本番データの変更なし' in home_text
+    home_card = next(b['text']['text'] for b in
+                     client.views_publish.call_args.kwargs['view']['blocks']
+                     if 'HD-20261031-002' in b.get('text', {}).get('text', ''))
+    assert home_card.startswith('作業名: 在庫棚卸しの実施')
+    assert home_card.index('在庫棚卸しの実施') < home_card.index('HD-20261031-002')
 
 
 def test_dm_and_home_mark_missing_display_fields(approval):
-    _, inbox, client, _ = approval
+    handler, inbox, client, _ = approval
+    # Simulate a card stored before display fields existed: the row keeps
+    # NULLs and must still render, with explicit "not stated" markers.
+    from contextlib import closing
+    with closing(handler.ledger.connect()) as db:
+        with db:
+            db.execute("UPDATE cards SET title=NULL, outcome=NULL, scope=NULL")
     run(inbox.sweep())
     dm_blocks = client.chat_postMessage.call_args.kwargs['blocks']
     dm_text = dm_blocks[0]['text']['text']
