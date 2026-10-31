@@ -24,6 +24,7 @@ from plugins.platforms.slack.business_approval import (
     BusinessApproval,
     Ledger,
     check_owned,
+    _effective_uid,
 )
 
 _REQUEST_ID = re.compile(r"business-[0-9a-f]{32}\Z")
@@ -129,7 +130,7 @@ class ReceiptReceiver:
             info = os.fstat(stream.fileno())
             if (
                 not stat.S_ISREG(info.st_mode)
-                or info.st_uid != os.geteuid()
+                or info.st_uid != _effective_uid()
                 or stat.S_IMODE(info.st_mode) != 0o600
                 or info.st_nlink != 1
             ):
