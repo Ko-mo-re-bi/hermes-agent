@@ -47,13 +47,21 @@ def parse_issuer_document(text):
     return record
 
 
+def _effective_uid():
+    """Fail closed on hosts without POSIX ownership semantics."""
+    getter = getattr(os, "geteuid", None)
+    if not callable(getter):
+        raise ValueError("Business approval requires POSIX ownership checks")
+    return getter()
+
+
 def check_owned(path, *, directory=False):
     if path.resolve() != path:
         raise ValueError("Symlink paths are not accepted")
     info = path.lstat()
     expected = stat.S_ISDIR if directory else stat.S_ISREG
     mode = 0o700 if directory else 0o600
-    if (not expected(info.st_mode) or info.st_uid != os.geteuid()
+    if (not expected(info.st_mode) or info.st_uid != _effective_uid()
             or stat.S_IMODE(info.st_mode) != mode):
         raise ValueError("Path must be owned by the profile process UID with private permissions")
 
@@ -68,9 +76,9 @@ def issuer_verifier(root):
             check_owned(root, directory=True)
             path = root / (registration["hd"] + ".md")
             descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-            with os.fdopen(descriptor) as stream:
+            with os.fdopen(descriptor, "r", encoding="utf-8") as stream:
                 info = os.fstat(stream.fileno())
-                if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != _effective_uid()
                         or stat.S_IMODE(info.st_mode) != 0o600):
                     return False
                 record = parse_issuer_document(stream.read())
