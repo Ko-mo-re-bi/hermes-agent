@@ -244,6 +244,7 @@ class BusinessApproval:
         self.outbox_failures = {}
         self.outbox_reported = set()
         self.sweeper = None
+        self.inbox = None
         if not Path(path).is_absolute() or not self.outbox.is_absolute():
             raise ValueError("Business approval paths must be absolute and profile-owned")
         with self.ledger.connect():
@@ -315,6 +316,8 @@ class BusinessApproval:
         for row in self.ledger.unwritten():
             if row['request_id'] not in done:
                 self.deliver(row, compare_existing=True)
+        if self.inbox is not None:
+            await self.inbox.sweep()
 
     async def _sweep_forever(self):
         while True:
@@ -347,6 +350,8 @@ class BusinessApproval:
         except Exception:
             logging.getLogger(__name__).warning(
                 "Business approval display update failed; durable result retained")
+        if self.inbox is not None:
+            await self.inbox.after_decision(row)
 
     async def reaction(self, event, body, removed=False):
         item = event.get('item') or {}
@@ -422,4 +427,25 @@ def bind(adapter):
                                profile=adapter.config.extra["business_approval_profile"])
     for action_id in CHOICES:
         adapter._app.action(action_id)(handler.action)
+    dm_enabled = adapter.config.extra.get("business_approval_dm_enabled") is True
+    home_enabled = adapter.config.extra.get("business_approval_home_enabled") is True
+    if dm_enabled or home_enabled:
+        from plugins.platforms.slack.business_approval_inbox import (
+            ApprovalInbox, DM_ACTIONS, HOME_ACTIONS, HOME_PAGE_ACTION,
+        )
+        handler.inbox = ApprovalInbox(handler, dm_enabled=dm_enabled,
+                                     home_enabled=home_enabled)
+        for action_id in (DM_ACTIONS if dm_enabled else {}):
+            adapter._app.action(action_id)(handler.inbox.action)
+        for action_id in (HOME_ACTIONS if home_enabled else {}):
+            adapter._app.action(action_id)(handler.inbox.action)
+        if home_enabled:
+            adapter._app.action(HOME_PAGE_ACTION)(handler.inbox.action)
+            original_home = adapter._handle_app_home_opened
+
+            async def _approval_home_event(event, body=None):
+                await original_home(event, body)
+                await handler.inbox.home_opened(event, body)
+
+            adapter._handle_app_home_opened = _approval_home_event
     return handler
