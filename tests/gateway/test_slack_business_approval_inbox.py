@@ -361,6 +361,7 @@ def test_coordination_home_is_single_publisher_for_approval_and_observation(appr
         "grants": [{"team_id": "TWORK", "user_id": APPROVER, "board": "sample"}],
     }
     adapter._business_approval = handler
+    adapter._coordination_home = None
     # The read-only observation DB may be disconnected; approvals still render.
     async def exercise():
         await bind_home(adapter).opened(
@@ -382,6 +383,7 @@ def test_decision_refreshes_shared_home_without_clobbering_observation(approval,
         "grants": [{"team_id": "TWORK", "user_id": APPROVER, "board": "sample"}],
     }
     adapter._business_approval = handler
+    adapter._coordination_home = None
     run(inbox.publish_home("TWORK"))
     assert client.views_publish.await_count == 1
     view = client.views_publish.call_args.kwargs["view"]
@@ -396,6 +398,7 @@ def test_no_shared_home_publish_without_exact_observation_grant(approval, tmp_pa
         "grants": [{"team_id": "TWORK", "user_id": "UOTHER", "board": "sample"}],
     }
     adapter._business_approval = handler
+    adapter._coordination_home = None
     run(inbox.publish_home("TWORK"))
     client.views_publish.assert_not_called()
 
