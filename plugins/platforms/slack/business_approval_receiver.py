@@ -214,7 +214,6 @@ class ReceiptReceiver:
                 if current and current["lease_until"] > now:
                     raise ValueError("Another unexpired claim exists")
                 token = uuid.uuid4().hex
-                fields = (self.ledger.profile, operator, now, now + lease_seconds, digest)
                 if current:
                     db.execute(
                         "UPDATE business_approval_receipts SET state='claimed', "
