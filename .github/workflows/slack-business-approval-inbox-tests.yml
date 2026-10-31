@@ -1,0 +1,39 @@
+name: Slack Business Approval Inbox Acceptance
+
+on:
+  pull_request:
+    paths:
+      - 'plugins/platforms/slack/business_approval*.py'
+      - 'tests/gateway/test_slack_business_approval*.py'
+      - '.github/workflows/slack-business-approval-inbox-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  approval-inbox:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Prepare pinned test environment
+        uses: ./.github/actions/setup-pm
+        with:
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          test-environment: 'true'
+      - name: Canonical targeted test runner
+        run: |
+          bash scripts/run_tests.sh \
+            tests/gateway/test_slack_business_approval_inbox.py \
+            tests/gateway/test_slack_business_approval.py \
+            tests/gateway/test_slack_business_approval_receiver.py \
+            tests/gateway/test_slack_approval_buttons.py \
+            tests/gateway/test_slack_plugin_action_handlers.py
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
