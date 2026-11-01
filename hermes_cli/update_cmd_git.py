@@ -627,6 +627,20 @@ def _locate_real_git() -> Optional[Path]:
         for base in (r"C:\Program Files", r"C:\Program Files (x86)")
         for arch in ("clangarm64", "mingw64", "mingw32")
     ] + _portable_git_candidates()
+    # Hosted Windows runners can place Git for Windows in an isolated tool cache
+    # (for example D:\\a\\_temp\\setup-pm\\tools\\git-...\\cmd\\git.exe), not Program Files.
+    # Only accept the real git-core binary in that *same installation*; never
+    # substitute a PATH shim or accept an executable whose probe failed.
+    import shutil
+    path_git = shutil.which("git")
+    if path_git:
+        shim = Path(path_git)
+        if shim.parent.name.lower() in {"cmd", "bin"}:
+            install_root = shim.parent.parent
+            candidates.extend(
+                install_root / arch / "libexec" / "git-core" / "git.exe"
+                for arch in ("clangarm64", "mingw64", "mingw32")
+            )
     return next((c for c in candidates if c.exists() and _probe_fork_bomb([str(c)]) is False), None)
 
 
