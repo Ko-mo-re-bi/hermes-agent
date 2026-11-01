@@ -13,7 +13,6 @@ from pathlib import Path
 import sqlite3
 import time
 
-from plugins.platforms.slack.business_approval import APPROVER
 
 logger = logging.getLogger(__name__)
 PAGE_SIZE = 20
@@ -249,7 +248,11 @@ class Home:
             view = render(data, board, page, approval)
             business = getattr(self.adapter, "_business_approval", None)
             inbox = getattr(business, "inbox", None)
-            if (user == APPROVER and inbox is not None
+            # Optional approval integrations must not be imported by the
+            # dependency-light observation Home (isolated smoke checks).
+            if inbox is not None:
+                from plugins.platforms.slack.business_approval import APPROVER
+            if (inbox is not None and user == APPROVER
                     and inbox.home_enabled and inbox._client(team) is client):
                 try:
                     approval_blocks = await asyncio.to_thread(
