@@ -501,6 +501,9 @@ def bind(adapter):
         if home_enabled:
             adapter._app.action(HOME_PAGE_ACTION)(handler.inbox.action)
             original_home = adapter._handle_app_home_opened
+            # Reconnect restores this method before binding the replacement,
+            # so Home events cannot accumulate stale approval wrappers.
+            adapter._business_approval_original_home = original_home
 
             async def _approval_home_event(event, body=None):
                 await original_home(event, body)
