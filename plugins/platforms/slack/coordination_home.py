@@ -13,6 +13,8 @@ from pathlib import Path
 import sqlite3
 import time
 
+from plugins.platforms.slack.business_approval import APPROVER
+
 logger = logging.getLogger(__name__)
 PAGE_SIZE = 20
 ACTION = "hermes_observe_page"
@@ -247,7 +249,7 @@ class Home:
             view = render(data, board, page, approval)
             business = getattr(self.adapter, "_business_approval", None)
             inbox = getattr(business, "inbox", None)
-            if (user == "U0C79V9C6N6" and inbox is not None
+            if (user == APPROVER and inbox is not None
                     and inbox.home_enabled and inbox._client(team) is client):
                 try:
                     approval_blocks = await asyncio.to_thread(
