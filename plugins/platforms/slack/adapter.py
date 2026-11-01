@@ -1812,6 +1812,20 @@ class SlackAdapter(BasePlatformAdapter):
             if not self._acquire_platform_lock("slack-app-token", app_token, "Slack app token"):
                 return False
             lock_acquired = True
+            # A reconnect replaces Bolt listeners. Stop the previous approval
+            # manager before it becomes unreachable; its periodic sweeper can
+            # otherwise keep sending DMs after the new manager starts.
+            prior_business = getattr(self, "_business_approval", None)
+            if prior_business is not None:
+                await prior_business.stop()
+                self._business_approval = None
+            # The approval inbox wraps the App Home event handler. Restore the
+            # original before binding new listeners, or reconnects would stack
+            # wrappers and invoke old approval handlers after configuration changes.
+            original_home = getattr(self, "_business_approval_original_home", None)
+            if original_home is not None:
+                self._handle_app_home_opened = original_home
+                self._business_approval_original_home = None
             self._running = False
             # Cancel AND await the old watchdog so it can't see _running=False,
             # exit, and leave no monitor behind.
