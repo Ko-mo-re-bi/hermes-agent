@@ -631,8 +631,9 @@ def _locate_real_git() -> Optional[Path]:
     # (for example D:\\a\\_temp\\setup-pm\\tools\\git-...\\cmd\\git.exe), not Program Files.
     # Only accept the real git-core binary in that *same installation*; never
     # substitute a PATH shim or accept an executable whose probe failed.
-    import shutil
-    path_git = shutil.which("git")
+    from hermes_platform.resolver import locate_command
+    git_resolution = locate_command("git")
+    path_git = git_resolution.command[0] if git_resolution.found else None
     if path_git:
         shim = Path(path_git)
         if shim.parent.name.lower() in {"cmd", "bin"}:
