@@ -1623,8 +1623,13 @@ class SlackAdapter(BasePlatformAdapter):
         async def _noop(event, body):
             return None
 
+        from plugins.platforms.slack.business_approval import bind
+        business = self._business_approval = bind(self)
+
         def _reaction(removed: bool):
             async def _handler(event, body):
+                if business is not None and await business.reaction(event, body, removed):
+                    return
                 await self._handle_slack_reaction(event, removed=removed)
 
             return _handler
@@ -1687,6 +1692,10 @@ class SlackAdapter(BasePlatformAdapter):
             self._app.action(_action_id)(self._handle_approval_action)
         for _action_id in self._CONFIRM_CHOICES:
             self._app.action(_action_id)(self._handle_slash_confirm_action)
+        from plugins.platforms.slack.coordination_home import bind as bind_home
+        for action_id in ("hermes_observe_page_prev", "hermes_observe_page_next"):
+            self._app.action(action_id)(bind_home(self).action)
+        self._app.action("hermes_observe_thread")(bind_home(self).thread_action)
         self._app.action("hermes_feedback")(self._handle_feedback_action)
         # Clarify buttons (tools/clarify_gateway.py); indexed action IDs because
         # Block Kit requires unique IDs within an actions block.
@@ -1834,6 +1843,8 @@ class SlackAdapter(BasePlatformAdapter):
                 self._start_socket_mode_handler()
                 self._running = True
                 self._ensure_socket_watchdog()
+                if getattr(self, "_business_approval", None) is not None:
+                    self._business_approval.start()
             except Exception:
                 self._running = False
                 try:
@@ -1908,6 +1919,8 @@ class SlackAdapter(BasePlatformAdapter):
     async def disconnect(self) -> None:
         """Disconnect from Slack."""
         self._running = False
+        if getattr(self, "_business_approval", None) is not None:
+            await self._business_approval.stop()
         # Seal dangling native streams so no live-typing indicator survives a restart.
         for key, stream in list(self._active_streams.items()):
             await self._seal_stream(key, stream)
@@ -3817,6 +3830,10 @@ class SlackAdapter(BasePlatformAdapter):
 
     async def _handle_app_home_opened(self, event: dict, body: Optional[dict] = None) -> None:
         """Handle Slack Agent DM-open lifecycle events without producing replies."""
+        if event.get("tab") == "home":
+            from plugins.platforms.slack.coordination_home import bind
+            await bind(self).opened(event, body)
+            return
         if event.get("tab") != "messages":
             return
         channel_id = event.get("channel") or event.get("channel_id") or ""
