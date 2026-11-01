@@ -1,4 +1,5 @@
 name: Nix flake check
+# Compatibility: run this gate on standard hosted runners for public personal repos.
 
 # Builds every output of the flake: the package, the devShell, and the 21
 # checks under nix/checks.nix — module evaluation, option parity, .env
