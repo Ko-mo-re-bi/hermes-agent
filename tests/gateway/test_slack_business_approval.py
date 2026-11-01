@@ -95,7 +95,7 @@ def test_deny_button_survives_display_failure(ledger, monkeypatch):
         channel={'id': CHANNEL}, user={'id': APPROVER}, container={'message_ts': '100.1'}),
         {'action_id': 'business_deny', 'value': 'HD-123'}))
     assert ledger.results()[0]['decision'] == 'deny'
-    assert 'deny' in next(handler.outbox.glob('*.md')).read_text(encoding="utf-8")
+    assert 'deny' in next(handler.outbox.glob('*.md')).read_text(encoding="utf-8-sig")
 
 
 @pytest.mark.parametrize('issued', [1001, -85400, float('nan'), float('inf')])
@@ -203,7 +203,7 @@ def test_local_evidence_and_cli_restart(issuer, tmp_path, monkeypatch, capsys):
                'scope': '本番データの変更なし'}
     path.write_text(_display_doc(record, **display), encoding="utf-8")
     path.chmod(0o600)
-    assert parse_issuer_document(path.read_text(encoding="utf-8")) == record | display
+    assert parse_issuer_document(path.read_text(encoding="utf-8-sig")) == record | display
     db = str(tmp_path / 'cli.sqlite')
     args = ['register', '--db', db, '--profile', 'appdev', '--issuer-root', str(root)]
     for key in ('hd', 'team', 'channel', 'message_ts', 'thread_ts', 'issued', 'requester'):
@@ -355,7 +355,7 @@ def test_sweep_renders_expired_and_writes_receipt_once(ledger, monkeypatch):
     assert row['decision'] == 'expired' and row['outbox_written_at'] == 87400
     assert 'expired' in client.chat_update.call_args.kwargs['text']
     assert client.chat_update.await_count == 1
-    assert 'expired' in receipt(handler, row).read_text(encoding="utf-8")
+    assert 'expired' in receipt(handler, row).read_text(encoding="utf-8-sig")
     assert [p.name for p in handler.outbox.iterdir()] == [receipt(handler, row).name]
 
 
@@ -421,7 +421,7 @@ def test_retry_with_different_existing_receipt_errors_without_overwrite(ledger, 
     with caplog.at_level('ERROR'):
         for _ in range(5):
             asyncio.run(handler.sweep())
-    assert receipt(handler, row).read_text(encoding="utf-8") == 'tampered\n'
+    assert receipt(handler, row).read_text(encoding="utf-8-sig") == 'tampered\n'
     assert ledger.results()[0]['outbox_written_at'] is None
     assert len([r for r in caplog.records if r.levelname == 'ERROR']) == 1
     assert len(list(handler.outbox.iterdir())) == 1
@@ -480,7 +480,7 @@ def test_issuer_document_accepts_optional_display_fields(issuer):
     _, path, record = issuer
     path.write_text(_display_doc(record, title='在庫棚卸しの実施',
                                  outcome='棚卸し結果が確定する', scope='本番データの変更なし'))
-    parsed = parse_issuer_document(path.read_text(encoding="utf-8"))
+    parsed = parse_issuer_document(path.read_text(encoding="utf-8-sig"))
     assert parsed['title'] == '在庫棚卸しの実施'
     assert parsed['outcome'] == '棚卸し結果が確定する'
     assert parsed['scope'] == '本番データの変更なし'
@@ -562,7 +562,7 @@ def test_cli_rejects_missing_display_fields_without_creating_db(issuer, tmp_path
 
 def test_legacy_issuer_document_without_display_fields_still_parses(issuer):
     _, path, record = issuer
-    assert parse_issuer_document(path.read_text(encoding="utf-8")) == record
+    assert parse_issuer_document(path.read_text(encoding="utf-8-sig")) == record
 
 
 def test_migration_adds_display_columns_and_keeps_existing_rows(tmp_path):
