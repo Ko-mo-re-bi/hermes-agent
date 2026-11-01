@@ -561,6 +561,38 @@ except HTTPException as exc:
 '''
 
 
+def test_browse_begin_interruption_uses_budget_error_without_schema_writes(tmp_path, monkeypatch):
+    """Even an interrupt during BEGIN must roll back and report a bounded timeout."""
+    import hermes_cli.sqlite_safe_read as safe
+    import hermes_state_reconcile as reconcile
+
+    path = _lagging_store_with_history(_profile_home(tmp_path), rows=3)
+    before = _session_columns(path)
+    original_connect = safe.connect_tracked
+    budget = reconcile._Budget(3.0)
+
+    class InterruptedBegin:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def __getattr__(self, name):
+            return getattr(self.conn, name)
+
+        def execute(self, statement, *args, **kwargs):
+            if statement == "BEGIN IMMEDIATE":
+                budget.expired = True
+                raise sqlite3.OperationalError("interrupted")
+            return self.conn.execute(statement, *args, **kwargs)
+
+    monkeypatch.setattr(
+        safe, "connect_tracked",
+        lambda *args, **kwargs: InterruptedBegin(original_connect(*args, **kwargs)),
+    )
+    with pytest.raises(reconcile.BrowseBudgetExceeded):
+        reconcile._apply_additive_schema(path, budget)
+    assert _session_columns(path) == before
+
+
 @pytest.mark.platforms("linux", "macos")
 @pytest.mark.parametrize("phase", ["ddl"])
 def test_slow_browse_reconcile_gives_up_inside_its_budget_and_boot_waits_it_out(tmp_path, phase):
