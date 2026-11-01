@@ -44,7 +44,7 @@ def _data(value):
 
 
 def _section(value):
-    return {"type": "section", "text": {"type": "plain_text", "text": value[:2900]}}
+    return {"type": "section", "text": {"type": "plain_text", "text": value[:2900], "emoji": False}}
 
 
 def _deadline(row):
@@ -199,6 +199,9 @@ class ApprovalInbox:
                 # The identity is established through Slack's authenticated conversations.open.
                 if convo.get("user") not in (None, APPROVER):
                     raise ValueError("DM recipient mismatch")
+                # Re-check actual wall time after the awaited Slack API call.
+                # The optional 'now' is a sweep/lease snapshot and may be stale;
+                # relying on it here risks sending an already-expired approval.
                 if time.time() >= row["expires"]:
                     self._retry(row["request_id"], token, now)
                     continue
