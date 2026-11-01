@@ -232,10 +232,14 @@ def _apply_additive_schema(path: Path, budget: _Budget | None = None) -> None:
     budget.check()
     with closing(connect_tracked(path, tracking_path=path, timeout=budget.busy_timeout(),
                                  isolation_level=None)) as conn:
-        _reapply_durability_barriers(conn)
-        budget.check()
+        # Arm before connection durability PRAGMAs: on slow macOS hosts they execute
+        # SQL too, and must not hold gateway.lock beyond the browse deadline.
         budget.arm(conn)
         try:
+            _reapply_durability_barriers(conn)
+            # The best-effort PRAGMA helper can swallow SQLite interrupts.
+            # Check the budget explicitly before entering the write transaction.
+            budget.check()
             # BEGIN can itself be interrupted by the budget's progress
             # handler. Convert it with the same rollback-safe guard as DDL.
             conn.execute('BEGIN IMMEDIATE')
