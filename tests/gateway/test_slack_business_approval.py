@@ -95,7 +95,7 @@ def test_deny_button_survives_display_failure(ledger, monkeypatch):
         channel={'id': CHANNEL}, user={'id': APPROVER}, container={'message_ts': '100.1'}),
         {'action_id': 'business_deny', 'value': 'HD-123'}))
     assert ledger.results()[0]['decision'] == 'deny'
-    assert 'deny' in next(handler.outbox.glob('*.md')).read_text()
+    assert 'deny' in next(handler.outbox.glob('*.md')).read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize('issued', [1001, -85400, float('nan'), float('inf')])
@@ -191,7 +191,7 @@ def issuer(tmp_path):
                   expires=87400.0, requester='joushou', approver=APPROVER,
                   automatic_execution='none')
     path = root / 'HD-123.md'
-    path.write_text(''.join(f'{key}: {value}\n' for key, value in record.items()))
+    path.write_text(''.join(f'{key}: {value}\n' for key, value in record.items()), encoding="utf-8")
     path.chmod(0o600)
     return root, path, record
 
@@ -201,9 +201,9 @@ def test_local_evidence_and_cli_restart(issuer, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr('plugins.platforms.slack.business_approval.time.time', lambda: 1001)
     display = {'title': '在庫棚卸しの実施', 'outcome': '棚卸し結果が確定する',
                'scope': '本番データの変更なし'}
-    path.write_text(_display_doc(record, **display))
+    path.write_text(_display_doc(record, **display), encoding="utf-8")
     path.chmod(0o600)
-    assert parse_issuer_document(path.read_text()) == record | display
+    assert parse_issuer_document(path.read_text(encoding="utf-8")) == record | display
     db = str(tmp_path / 'cli.sqlite')
     args = ['register', '--db', db, '--profile', 'appdev', '--issuer-root', str(root)]
     for key in ('hd', 'team', 'channel', 'message_ts', 'thread_ts', 'issued', 'requester'):
@@ -236,7 +236,7 @@ def test_each_issuer_field_must_match(issuer, field):
                     if key not in ('approver', 'automatic_execution')}
     assert issuer_verifier(root)(registration) is True
     record[field] = 'wrong'
-    path.write_text(''.join(f'{key}: {value}\n' for key, value in record.items()))
+    path.write_text(''.join(f'{key}: {value}\n' for key, value in record.items()), encoding="utf-8")
     assert issuer_verifier(root)(registration) is False
 
 
@@ -284,7 +284,7 @@ def test_evidence_permissions_and_owner(issuer, monkeypatch):
     path.chmod(0o644)
     assert issuer_verifier(root)(registration) is False
     path.chmod(0o600)
-    uid = os.geteuid()
+    uid = os.geteuid()  # windows-footgun: ok
     monkeypatch.setattr(os, 'geteuid', lambda: uid + 1)
     assert issuer_verifier(root)(registration) is False
     with pytest.raises(ValueError):
@@ -355,7 +355,7 @@ def test_sweep_renders_expired_and_writes_receipt_once(ledger, monkeypatch):
     assert row['decision'] == 'expired' and row['outbox_written_at'] == 87400
     assert 'expired' in client.chat_update.call_args.kwargs['text']
     assert client.chat_update.await_count == 1
-    assert 'expired' in receipt(handler, row).read_text()
+    assert 'expired' in receipt(handler, row).read_text(encoding="utf-8")
     assert [p.name for p in handler.outbox.iterdir()] == [receipt(handler, row).name]
 
 
@@ -407,7 +407,7 @@ def test_retry_accepts_identical_existing_receipt(ledger):
     handler, _ = make_handler(ledger)
     row = decide(ledger)
     handler.outbox.mkdir()
-    receipt(handler, row).write_text(handler.receipt_body(row))
+    receipt(handler, row).write_text(handler.receipt_body(row), encoding="utf-8")
     assert handler.deliver(row) is False  # first placement treats an existing name as failure
     asyncio.run(handler.sweep())
     assert ledger.results()[0]['outbox_written_at'] is not None
@@ -417,11 +417,11 @@ def test_retry_with_different_existing_receipt_errors_without_overwrite(ledger, 
     handler, _ = make_handler(ledger)
     row = decide(ledger)
     handler.outbox.mkdir()
-    receipt(handler, row).write_text('tampered\n')
+    receipt(handler, row).write_text('tampered\n', encoding="utf-8")
     with caplog.at_level('ERROR'):
         for _ in range(5):
             asyncio.run(handler.sweep())
-    assert receipt(handler, row).read_text() == 'tampered\n'
+    assert receipt(handler, row).read_text(encoding="utf-8") == 'tampered\n'
     assert ledger.results()[0]['outbox_written_at'] is None
     assert len([r for r in caplog.records if r.levelname == 'ERROR']) == 1
     assert len(list(handler.outbox.iterdir())) == 1
@@ -480,7 +480,7 @@ def test_issuer_document_accepts_optional_display_fields(issuer):
     _, path, record = issuer
     path.write_text(_display_doc(record, title='在庫棚卸しの実施',
                                  outcome='棚卸し結果が確定する', scope='本番データの変更なし'))
-    parsed = parse_issuer_document(path.read_text())
+    parsed = parse_issuer_document(path.read_text(encoding="utf-8"))
     assert parsed['title'] == '在庫棚卸しの実施'
     assert parsed['outcome'] == '棚卸し結果が確定する'
     assert parsed['scope'] == '本番データの変更なし'
@@ -500,7 +500,7 @@ def test_issuer_document_rejects_bad_display_fields(issuer):
 
 def test_display_fields_must_match_issuer_document(issuer):
     root, path, record = issuer
-    path.write_text(_display_doc(record, title='在庫棚卸しの実施'))
+    path.write_text(_display_doc(record, title='在庫棚卸しの実施'), encoding="utf-8")
     registration = {key: value for key, value in record.items()
                     if key not in ('approver', 'automatic_execution')}
     assert issuer_verifier(root)(registration) is False
@@ -548,7 +548,7 @@ def test_cli_rejects_missing_display_fields_without_creating_db(issuer, tmp_path
     monkeypatch.setattr('plugins.platforms.slack.business_approval.time.time', lambda: 1001)
     display = {'title': '在庫棚卸しの実施', 'outcome': '棚卸し結果が確定する',
                'scope': '本番データの変更なし'}
-    path.write_text(_display_doc(record, **display))
+    path.write_text(_display_doc(record, **display), encoding="utf-8")
     path.chmod(0o600)
     db = str(tmp_path / 'cli.sqlite')
     args = ['register', '--db', db, '--profile', 'appdev', '--issuer-root', str(root)]
@@ -562,7 +562,7 @@ def test_cli_rejects_missing_display_fields_without_creating_db(issuer, tmp_path
 
 def test_legacy_issuer_document_without_display_fields_still_parses(issuer):
     _, path, record = issuer
-    assert parse_issuer_document(path.read_text()) == record
+    assert parse_issuer_document(path.read_text(encoding="utf-8")) == record
 
 
 def test_migration_adds_display_columns_and_keeps_existing_rows(tmp_path):

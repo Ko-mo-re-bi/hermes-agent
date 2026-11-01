@@ -402,7 +402,8 @@ class BusinessApproval:
                 blocks=[{"type": "section", "text": {"type": "plain_text", "text": text}}])
         except Exception:
             logging.getLogger(__name__).warning(
-                "Business approval display update failed; durable result retained")
+                "Business approval display update failed; durable result retained",
+                exc_info=True)
         if self.inbox is not None:
             await self.inbox.after_decision(row)
 

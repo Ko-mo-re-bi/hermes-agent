@@ -264,7 +264,7 @@ class Home:
                     view["blocks"] = approval_blocks + view["blocks"][:room]
             try:
                 await client.views_publish(user_id=user, view=view)
-            except Exception as exc:
+            except Exception as exc:  # health: allow BLE001 -- views_publish boundary: 429 handled via Retry-After cooldown; other failures are logged and dropped so a Home failure never breaks the adapter
                 response = getattr(exc, "response", None)
                 if getattr(response, "status_code", None) == 429:
                     try:

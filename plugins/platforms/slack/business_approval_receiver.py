@@ -153,35 +153,33 @@ class ReceiptReceiver:
                 "ORDER BY decided DESC LIMIT ?",
                 (self.ledger.profile, limit),
             ).fetchall()
-            result = []
-            for item in rows:
-                row = dict(item)
-                status = "receipt_pending"
-                if row["outbox_written_at"] is not None:
-                    try:
-                        self._receipt_sha256(row)
-                    except (OSError, ValueError):
-                        status = "receipt_invalid"
-                    else:
-                        status = "ready"
-                        if has_table:
-                            receipt = db.execute(
-                                "SELECT state, lease_until FROM business_approval_receipts "
-                                "WHERE request_id=? AND profile=?",
-                                (row["request_id"], self.ledger.profile),
-                            ).fetchone()
-                            if receipt:
-                                if receipt["state"] == "acked":
-                                    status = "acked"
-                                elif receipt["lease_until"] > now:
-                                    status = "claimed"
-                result.append({
-                    "request_id": row["request_id"],
-                    "hd": row["hd"],
-                    "decision": row["decision"],
-                    "status": status,
-                })
-            return result
+            return [{
+                "request_id": row["request_id"],
+                "hd": row["hd"],
+                "decision": row["decision"],
+                "status": self._row_status(db, dict(row), has_table, now),
+            } for row in rows]
+
+    def _row_status(self, db, row, has_table, now):
+        if row["outbox_written_at"] is None:
+            return "receipt_pending"
+        try:
+            self._receipt_sha256(row)
+        except (OSError, ValueError):
+            return "receipt_invalid"
+        status = "ready"
+        if has_table:
+            receipt = db.execute(
+                "SELECT state, lease_until FROM business_approval_receipts "
+                "WHERE request_id=? AND profile=?",
+                (row["request_id"], self.ledger.profile),
+            ).fetchone()
+            if receipt:
+                if receipt["state"] == "acked":
+                    status = "acked"
+                elif receipt["lease_until"] > now:
+                    status = "claimed"
+        return status
 
     def claim(
         self,

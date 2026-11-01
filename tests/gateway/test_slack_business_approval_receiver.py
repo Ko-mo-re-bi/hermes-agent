@@ -110,7 +110,7 @@ def test_expired_lease_recovery_rejects_stale_token(delivered):
 def test_invalid_receipt_never_claimed_or_acknowledged(delivered, variant):
     receiver, request_id, receipt, db = delivered
     if variant == "tampered":
-        receipt.write_text("changed decision\n")
+        receipt.write_text("changed decision\n", encoding="utf-8")
     elif variant == "missing":
         receipt.unlink()
     elif variant == "bad_mode":
