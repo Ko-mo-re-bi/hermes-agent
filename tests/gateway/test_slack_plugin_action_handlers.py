@@ -263,3 +263,44 @@ class TestSlackAdapterPluginActionWiring:
         # Built-ins still wired even when plugin loader failed.
         action_ids = [aid for aid, _cb in registered_actions]
         assert "hermes_approve_once" in action_ids
+
+
+def test_reconnect_stops_previous_approval_manager_before_rebinding():
+    # A second connect() must not leave a stale sweeper delivering duplicates,
+    # and must not stack App Home wrappers from a prior connection.
+    adapter = SlackAdapter(PlatformConfig(enabled=True, token="xoxb-fake"))
+    original_home = adapter._handle_app_home_opened
+
+    async def stale_home(event, body=None):
+        raise AssertionError("stale Home wrapper was retained")
+
+    previous = MagicMock()
+    previous.stop = AsyncMock()
+    events = []
+
+    async def stop_previous():
+        events.append("previous_stopped")
+
+    previous.stop.side_effect = stop_previous
+    adapter._business_approval = previous
+    adapter._business_approval_original_home = original_home
+    adapter._handle_app_home_opened = stale_home
+    replacement = MagicMock()
+
+    def bind_replacement(current_adapter):
+        assert current_adapter is adapter
+        assert current_adapter._business_approval is None
+        assert current_adapter._handle_app_home_opened == original_home
+        events.append("replacement_bound")
+        return replacement
+
+    with patch("plugins.platforms.slack.business_approval.bind",
+               side_effect=bind_replacement):
+        connected, _ = _connect_with_recording_app(adapter, plugin_handlers=[])
+
+    assert connected is True
+    previous.stop.assert_awaited_once()
+    replacement.start.assert_called_once()
+    assert events == ["previous_stopped", "replacement_bound"]
+    assert adapter._business_approval is replacement
+    assert adapter._business_approval_original_home is None
