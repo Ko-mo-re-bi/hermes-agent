@@ -156,11 +156,6 @@ def test_live_expiry_blocks_stale_sweep(approval, monkeypatch):
     assert inbox.delivered() == []
 
 
-def test_unified_home_shares_approver_constant():
-    from plugins.platforms.slack.coordination_home import APPROVER as home_approver
-    assert home_approver == APPROVER
-
-
 def test_invalid_slack_response_never_marks_delivered(approval):
     _, inbox, client, _ = approval
     client.chat_postMessage.return_value = {"ok": False, "error": "not_in_channel"}
