@@ -561,6 +561,7 @@ except HTTPException as exc:
 '''
 
 
+@pytest.mark.platforms("linux", "macos")
 def test_browse_begin_interruption_uses_budget_error_without_schema_writes(tmp_path, monkeypatch):
     """Even an interrupt during BEGIN must roll back and report a bounded timeout."""
     import hermes_cli.sqlite_safe_read as safe
@@ -588,6 +589,34 @@ def test_browse_begin_interruption_uses_budget_error_without_schema_writes(tmp_p
         safe, "connect_tracked",
         lambda *args, **kwargs: InterruptedBegin(original_connect(*args, **kwargs)),
     )
+    with pytest.raises(reconcile.BrowseBudgetExceeded):
+        reconcile._apply_additive_schema(path, budget)
+    assert _session_columns(path) == before
+
+
+@pytest.mark.platforms("linux", "macos")
+def test_browse_durability_barriers_observe_budget_before_writes(tmp_path, monkeypatch):
+    """Slow macOS PRAGMAs cannot hold the gateway lock past the browse budget."""
+    import hermes_state_reconcile as reconcile
+    import hermes_state_repair as repair
+
+    path = _lagging_store_with_history(_profile_home(tmp_path), rows=3)
+    before = _session_columns(path)
+    budget = reconcile._Budget(3.0)
+    armed = []
+    real_arm = budget.arm
+
+    def observed_arm(conn):
+        armed.append(True)
+        real_arm(conn)
+
+    def expensive_barrier(_conn):
+        assert armed, "durability SQL must run after the budget progress handler is armed"
+        budget.expired = True  # models an interrupted/suppressed SQLite PRAGMA
+        return False
+
+    monkeypatch.setattr(budget, "arm", observed_arm)
+    monkeypatch.setattr(repair, "_reapply_durability_barriers", expensive_barrier)
     with pytest.raises(reconcile.BrowseBudgetExceeded):
         reconcile._apply_additive_schema(path, budget)
     assert _session_columns(path) == before
