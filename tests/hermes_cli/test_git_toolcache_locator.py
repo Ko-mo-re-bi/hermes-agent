@@ -16,7 +16,7 @@ def test_git_core_discovery_from_toolcache_path_shim(tmp_path, monkeypatch):
     core.write_bytes(b"real-git-core")
 
     monkeypatch.setattr("shutil.which", lambda command: str(shim) if command == "git" else None)
-    monkeypatch.setattr(git, "_portable_git_candidates", lambda: [])
+    monkeypatch.setattr(git, "_portable_git_candidates", list)
     monkeypatch.setattr(git, "_probe_fork_bomb", lambda argv: False if argv == [str(core)] else None)
     assert git._locate_real_git() == core
 
