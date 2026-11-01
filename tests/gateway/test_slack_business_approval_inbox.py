@@ -136,6 +136,31 @@ def test_failed_dm_post_retries_without_marking_delivered(approval):
     assert client.chat_postMessage.await_count == 2
 
 
+def test_approval_sections_disable_emoji_interpretation(approval):
+    _, inbox, client, _ = approval
+    run(inbox.sweep())
+    dm_blocks = client.chat_postMessage.call_args.kwargs["blocks"]
+    assert dm_blocks[0]["text"]["emoji"] is False
+
+
+def test_live_expiry_blocks_stale_sweep(approval, monkeypatch):
+    # The snapshot clock can precede the issuer deadline while the async
+    # Slack lookup completes after expiry. No actionable DM may be sent then.
+    handler, inbox, client, _ = approval
+    deadline = handler.ledger.pending()[0]["expires"]
+    monkeypatch.setattr("plugins.platforms.slack.business_approval_inbox.time.time",
+                        lambda: deadline + 1)
+    run(inbox.sweep(now=deadline - 1))
+    client.conversations_open.assert_awaited_once()
+    client.chat_postMessage.assert_not_awaited()
+    assert inbox.delivered() == []
+
+
+def test_unified_home_shares_approver_constant():
+    from plugins.platforms.slack.coordination_home import APPROVER as home_approver
+    assert home_approver == APPROVER
+
+
 def test_invalid_slack_response_never_marks_delivered(approval):
     _, inbox, client, _ = approval
     client.chat_postMessage.return_value = {"ok": False, "error": "not_in_channel"}
