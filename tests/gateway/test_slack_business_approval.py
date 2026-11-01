@@ -21,7 +21,9 @@ def ledger(tmp_path):
     store = Ledger(str(tmp_path / 'business.sqlite'), profile='appdev',
                    verifier=lambda registration: True)
     store.register(hd='HD-123', team='T1', channel=CHANNEL, message_ts='100.1',
-                   thread_ts='99.1', issued=1000, requester='joushou', now=1000)
+                   thread_ts='99.1', issued=1000, requester='joushou',
+                   title='在庫棚卸しの実施', outcome='棚卸し結果が確定する',
+                   scope='本番データの変更なし', now=1000)
     return store
 
 
@@ -49,7 +51,9 @@ def test_atomic_competition_replay_and_restart(ledger):
     assert len(restarted.results()) == 1
     with pytest.raises(sqlite3.IntegrityError):
         ledger.register(hd='HD-123', team='T1', channel=CHANNEL, message_ts='200.1',
-                        thread_ts='99.1', issued=1000, requester='other', now=1000)
+                        thread_ts='99.1', issued=1000, requester='other',
+                        title='在庫棚卸しの実施', outcome='棚卸し結果が確定する',
+                        scope='本番データの変更なし', now=1000)
 
 
 def test_real_handlers_share_decision_and_render_without_exec(ledger, monkeypatch):
@@ -195,11 +199,17 @@ def issuer(tmp_path):
 def test_local_evidence_and_cli_restart(issuer, tmp_path, monkeypatch, capsys):
     root, path, record = issuer
     monkeypatch.setattr('plugins.platforms.slack.business_approval.time.time', lambda: 1001)
-    assert parse_issuer_document(path.read_text()) == record
+    display = {'title': '在庫棚卸しの実施', 'outcome': '棚卸し結果が確定する',
+               'scope': '本番データの変更なし'}
+    path.write_text(_display_doc(record, **display))
+    path.chmod(0o600)
+    assert parse_issuer_document(path.read_text()) == record | display
     db = str(tmp_path / 'cli.sqlite')
     args = ['register', '--db', db, '--profile', 'appdev', '--issuer-root', str(root)]
     for key in ('hd', 'team', 'channel', 'message_ts', 'thread_ts', 'issued', 'requester'):
         args += ['--' + key.replace('_', '-'), str(record[key])]
+    for key, value in display.items():
+        args += ['--' + key, value]
     main(args)
     assert 'HD-123' in capsys.readouterr().out
     assert Path(db).stat().st_mode & 0o777 == 0o600
@@ -258,7 +268,9 @@ def test_expiry_last_instant_and_first_instant(ledger):
     # An already-decided card keeps its first decision, whatever the clock says.
     assert decide(ledger, now=87400)['decision'] == 'approve'
     ledger.register(hd='HD-124', team='T1', channel=CHANNEL, message_ts='300.1',
-                    thread_ts='99.1', issued=1000, requester='joushou', now=1000)
+                    thread_ts='99.1', issued=1000, requester='joushou',
+                    title='在庫棚卸しの実施', outcome='棚卸し結果が確定する',
+                    scope='本番データの変更なし', now=1000)
     late = decide(ledger, message_ts='300.1', now=87400)  # first instant past expiry
     assert late['decision'] == 'expired'
     assert decide(ledger, message_ts='300.1', now=87401)['decision'] == 'expired'
@@ -456,3 +468,118 @@ def test_sweeper_task_runs_at_start_and_stops(ledger, monkeypatch):
         assert task.done() and handler.sweeper is None
     asyncio.run(exercise())
     assert ledger.results()[0]['decision'] == 'expired'
+
+
+def _display_doc(record, **display):
+    merged = dict(record)
+    merged.update(display)
+    return ''.join(f'{key}: {value}\n' for key, value in merged.items())
+
+
+def test_issuer_document_accepts_optional_display_fields(issuer):
+    _, path, record = issuer
+    path.write_text(_display_doc(record, title='在庫棚卸しの実施',
+                                 outcome='棚卸し結果が確定する', scope='本番データの変更なし'))
+    parsed = parse_issuer_document(path.read_text())
+    assert parsed['title'] == '在庫棚卸しの実施'
+    assert parsed['outcome'] == '棚卸し結果が確定する'
+    assert parsed['scope'] == '本番データの変更なし'
+
+
+def test_issuer_document_rejects_bad_display_fields(issuer):
+    _, _, record = issuer
+    with pytest.raises(ValueError):
+        parse_issuer_document(_display_doc(record, summary='未定義の項目'))
+    with pytest.raises(ValueError):
+        parse_issuer_document(_display_doc(record, title='a') + 'title: b\n')
+    with pytest.raises(ValueError):
+        parse_issuer_document(_display_doc(record, title='x' * 201))
+    with pytest.raises(ValueError):
+        parse_issuer_document(_display_doc(record, title='ok').replace('requester: joushou\n', ''))
+
+
+def test_display_fields_must_match_issuer_document(issuer):
+    root, path, record = issuer
+    path.write_text(_display_doc(record, title='在庫棚卸しの実施'))
+    registration = {key: value for key, value in record.items()
+                    if key not in ('approver', 'automatic_execution')}
+    assert issuer_verifier(root)(registration) is False
+    assert issuer_verifier(root)(dict(registration, title='別の作業')) is False
+    assert issuer_verifier(root)(dict(registration, title='在庫棚卸しの実施')) is True
+
+
+def test_register_stores_display_fields(issuer, tmp_path, monkeypatch):
+    root, path, record = issuer
+    path.write_text(_display_doc(record, title='在庫棚卸しの実施',
+                                 outcome='棚卸し結果が確定する', scope='本番データの変更なし'))
+    monkeypatch.setattr('plugins.platforms.slack.business_approval.time.time', lambda: 1001)
+    db = str(tmp_path / 'display.sqlite')
+    initialize_database(db)
+    store = Ledger(db, profile='appdev', verifier=issuer_verifier(root))
+    store.register(hd='HD-123', team='T1', channel=CHANNEL, message_ts='100.1',
+                   thread_ts='99.1', issued=1000.0, requester='joushou',
+                   title='在庫棚卸しの実施', outcome='棚卸し結果が確定する',
+                   scope='本番データの変更なし', now=1001)
+    row = store.pending(now=1001)[0]
+    assert row['title'] == '在庫棚卸しの実施'
+    assert row['outcome'] == '棚卸し結果が確定する'
+    assert row['scope'] == '本番データの変更なし'
+
+
+@pytest.mark.parametrize('missing', ['title', 'outcome', 'scope'])
+def test_new_registration_rejects_missing_display_fields(tmp_path, missing):
+    tmp_path.chmod(0o700)
+    db = str(tmp_path / 'display.sqlite')
+    initialize_database(db)
+    store = Ledger(db, profile='appdev', verifier=lambda registration: True)
+    fields = {'title': '在庫棚卸しの実施', 'outcome': '棚卸し結果が確定する',
+              'scope': '本番データの変更なし'}
+    del fields[missing]
+    with pytest.raises(ValueError, match='requires issuer display fields'):
+        store.register(hd='HD-123', team='T1', channel=CHANNEL, message_ts='100.1',
+                       thread_ts='99.1', issued=1000.0, requester='joushou',
+                       now=1001, **fields)
+    assert store.pending(now=1001) == []
+
+
+def test_cli_rejects_missing_display_fields_without_creating_db(issuer, tmp_path,
+                                                                monkeypatch):
+    root, path, record = issuer
+    monkeypatch.setattr('plugins.platforms.slack.business_approval.time.time', lambda: 1001)
+    display = {'title': '在庫棚卸しの実施', 'outcome': '棚卸し結果が確定する',
+               'scope': '本番データの変更なし'}
+    path.write_text(_display_doc(record, **display))
+    path.chmod(0o600)
+    db = str(tmp_path / 'cli.sqlite')
+    args = ['register', '--db', db, '--profile', 'appdev', '--issuer-root', str(root)]
+    for key in ('hd', 'team', 'channel', 'message_ts', 'thread_ts', 'issued', 'requester'):
+        args += ['--' + key.replace('_', '-'), str(record[key])]
+    args += ['--title', display['title'], '--outcome', display['outcome']]
+    with pytest.raises(SystemExit):
+        main(args)
+    assert not Path(db).exists()
+
+
+def test_legacy_issuer_document_without_display_fields_still_parses(issuer):
+    _, path, record = issuer
+    assert parse_issuer_document(path.read_text()) == record
+
+
+def test_migration_adds_display_columns_and_keeps_existing_rows(tmp_path):
+    tmp_path.chmod(0o700)
+    path = tmp_path / 'legacy.sqlite'
+    path.touch(mode=0o600)
+    with sqlite3.connect(path) as db:
+        db.execute('''CREATE TABLE cards (
+            request_id TEXT PRIMARY KEY, hd TEXT NOT NULL, team TEXT NOT NULL,
+            profile TEXT NOT NULL, channel TEXT NOT NULL, message_ts TEXT NOT NULL,
+            thread_ts TEXT NOT NULL, issued REAL NOT NULL, expires REAL NOT NULL,
+            requester TEXT NOT NULL, decision TEXT, decided REAL, actor TEXT, source TEXT,
+            UNIQUE(profile, hd), UNIQUE(profile, team, channel, message_ts))''')
+        db.execute("INSERT INTO cards VALUES ('business-old', 'HD-9', 'T1', 'appdev', ?, '100.1', "
+                   "'99.1', 1000, 87400, 'joushou', NULL, NULL, NULL, NULL)", (CHANNEL,))
+    initialize_database(str(path))
+    store = Ledger(str(path), profile='appdev')
+    row = store.pending(now=1001)[0]
+    assert row['hd'] == 'HD-9'
+    assert row['title'] is None and row['outcome'] is None and row['scope'] is None

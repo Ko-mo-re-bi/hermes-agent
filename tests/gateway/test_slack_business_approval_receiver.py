@@ -27,6 +27,8 @@ def delivered(tmp_path):
         hd="HD-TEST-1", team="T1", channel=CHANNEL,
         message_ts="100.1", thread_ts="99.1",
         issued=1000, requester="operator", now=1000,
+        title="受領確認の検証", outcome="結果ファイルが受領される",
+        scope="業務への影響なし",
     )
     row = ledger.decide(
         team="T1", channel=CHANNEL, message_ts="100.1",

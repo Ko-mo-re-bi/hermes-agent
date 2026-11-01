@@ -35,6 +35,23 @@ expires=issued+86400、固定承認者、automatic_execution=noneをすべて照
 原本欠落、読取不能、権限不備、重複項目、不一致は拒否。
 自己申告trustedフラグは存在しない。Slack投稿者や本文は真正性の証拠にしない。
 
+## 表示項目（新規発行では必須）
+
+原本には、承認者が判断材料として読む表示項目を記載する。
+`title`（作業名）、`outcome`（承認後の結果）、`scope`（影響範囲）の3項目で、
+各1行・最大200文字・改行なし。項目は登録引数（`--title`等）と
+完全一致しなければ登録できない。意味の解釈には使わず、DMとApp Homeの
+先頭にそのまま表示するだけである。
+新規発行では3項目すべてが必須で、1つでも欠けた登録は拒否される
+（register CLIの引数も必須。Ledger.registerでも欠損を拒否する）。
+項目導入前に発行された旧原本の解析と、既存DBの行の読み取り・表示は
+互換のため壊さない。項目がない既存カードは「（発行原本に記載なし）」と
+表示され、推測で補わない。DMとApp Homeでは作業名を1行目に置き、
+案件ID（HD）は補助情報として後に置く。
+詳細は原本に紐づく正規の依頼スレッドへのリンクから確認する。
+DMとApp Homeのボタン文言は「承認する」「差し戻す」で統一する。
+発行担当がチャンネルへ掲載するカードのボタンも同じ文言にする。
+
 ## 登録と照会
 
 発行担当が正規経路でカードを掲載した後、返却されたmessage_tsを原本に確定する。
@@ -45,7 +62,8 @@ python -m plugins.platforms.slack.business_approval register \
   --db /absolute/profile/business.sqlite --profile example \
   --issuer-root /absolute/profile/issuer \
   --hd HD-20990101-001 --team T_DUMMY --channel C0C84GJEC5R \
-  --message-ts 100.1 --thread-ts 99.1 --issued 4070908800 --requester dummy-requester
+  --message-ts 100.1 --thread-ts 99.1 --issued 4070908800 --requester dummy-requester \
+  --title 作業名 --outcome 承認後の結果 --scope 影響範囲
 python -m plugins.platforms.slack.business_approval pending --db /absolute/profile/business.sqlite --profile example
 python -m plugins.platforms.slack.business_approval results --db /absolute/profile/business.sqlite --profile example
 ```
