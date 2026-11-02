@@ -360,10 +360,23 @@ def test_live_entry_fails_before_any_io(callback, monkeypatch, capsys):
     def forbidden(*args, **kwargs):
         raise AssertionError("Must fail before credential or network access")
 
+    monkeypatch.setenv("HERMES_SHARED_OAUTH_DISABLE", "1")
     monkeypatch.setattr(callback.Path, "read_text", forbidden)
     monkeypatch.setattr(callback, "Session", forbidden)
     assert callback.login("unused-client", "unused-token", 8765, callback.SCOPES) is False
     assert "disabled" in capsys.readouterr().out
+
+
+def test_live_entry_refuses_while_another_writer_runs(callback, monkeypatch, capsys):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Must fail before credential or network access")
+
+    monkeypatch.delenv("HERMES_SHARED_OAUTH_DISABLE", raising=False)
+    monkeypatch.setattr(callback, "_other_writer_running", lambda: 2)
+    monkeypatch.setattr(callback.Path, "read_text", forbidden)
+    monkeypatch.setattr(callback, "Session", forbidden)
+    assert callback.login("unused-client", "unused-token", 8765, callback.SCOPES) is False
+    assert "refused" in capsys.readouterr().out
 
 
 @pytest.mark.platforms("posix")

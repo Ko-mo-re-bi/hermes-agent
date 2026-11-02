@@ -164,8 +164,36 @@ class Session:
             self.state = ""
 
 
+def _other_writer_running() -> int:
+    """Count live Google token writers other than this process (metadata only)."""
+    hits = 0
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv = (entry / "cmdline").read_bytes().decode("utf-8", "replace")
+        except OSError:
+            continue
+        if any(m in argv for m in ("google_api.py", "gws_bridge", "gapi-shared")):
+            hits += 1
+    return hits
+
+
 def login(client_path, destination, port, scopes):
-    # Fail before opening client credentials, binding a socket or contacting Google.
-    # A local lock cannot protect legacy refresh writers or an unknown wrapper.
-    print("Authorization disabled: shared writer exclusion is unverified")
-    return False
+    """Opt-in single-use login. Runs only when this CLI is called explicitly."""
+    if os.environ.get("HERMES_SHARED_OAUTH_DISABLE") == "1":
+        print("Authorization disabled: HERMES_SHARED_OAUTH_DISABLE is set")
+        return False
+    writers = _other_writer_running()
+    if writers:
+        print(f"Authorization refused: {writers} other Google writer(s) running")
+        return False
+    try:
+        client = json.loads(Path(client_path).read_text(encoding="utf-8"))["installed"]
+        session = Session(client, destination, scopes=scopes, port=port)
+        ok = session.run()
+    except (Exception, KeyboardInterrupt):
+        ok = False
+    print("Authorization completed" if ok else
+          "Authorization failed or expired; previous credentials preserved")
+    return ok
