@@ -551,3 +551,10 @@ def test_callback_holds_lock_during_exchange(callback, tmp_path, inert_listener)
     finish(session, state=session.state, code="fictional-code")
     assert observed == [True]
     assert session.success
+
+
+def test_other_writer_scan_without_proc(callback, monkeypatch, tmp_path):
+    missing_proc = tmp_path / "missing-proc"
+    monkeypatch.setattr(callback, "Path", lambda path: missing_proc)
+
+    assert callback._other_writer_running() == 0

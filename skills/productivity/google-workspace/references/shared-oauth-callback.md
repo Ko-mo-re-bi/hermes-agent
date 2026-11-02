@@ -2,8 +2,12 @@
 
 This section supersedes the historical receipts below. All earlier uncommitted
 work has been retained on `hermes/google-shared-oauth-callback-20261102`.
-Public callback `login()` remains unconditionally fail-closed before client-file
-access, sockets or token exchange. No activation, real credential access, Google
+Public callback `login()` is opt-in: only an explicit `setup.py --callback`
+invocation starts a session. `HERMES_SHARED_OAUTH_DISABLE=1` stops it before
+client-file access, sockets or token exchange. Only one session can run at a time;
+it has a ten-minute maximum (the session default is five minutes), uses a random
+start URL, and refuses to start while
+another Google writer is running. It never installs an always-on listener. No activation, real credential access, Google
 request, deployment, push or PR is part of this work. Do not bypass this gate
 through the legacy manual authorization commands.
 
@@ -75,7 +79,8 @@ The implementation receipt and source hashes are in
 it covered save-time races without proving refresh exclusion. That receipt is
 superseded by the current review and test results; do not use its hashes or verdict.
 Current implementation and independent review: **75 PASS, 0 FAIL, 1 socket SKIP**
-each, on matching reviewed code/test hashes. Gate status remains **CLOSED**. No live Drive/Calendar read or deployed-writer
+each, on matching reviewed code/test hashes. The callback entry now uses the opt-in controls described above; production
+validation remains outstanding. No live Drive/Calendar read or deployed-writer
 inventory is supplied by fictional tests. No always-on listener is installed.
 
 ## PR and later reapplication handoff
@@ -117,9 +122,11 @@ here. No commit, main change, installed-skill change or external write is implie
 
 # Shared Google connection: isolated callback implementation
 
-This change adds an isolated callback prototype. `setup.py --callback` is now
-**disabled unconditionally** before client-file reads, socket creation or Google
-requests because shared-writer exclusion cannot be established. Do not use
+This change adds an isolated callback prototype. The current `setup.py --callback`
+entry starts only on explicit invocation, with one session at a time, a ten-minute
+limit and a random start URL. `HERMES_SHARED_OAUTH_DISABLE=1` stops it before
+client-file reads, socket creation or Google requests; other running Google
+writers also prevent startup. Do not use
 `--auth-url`, `--auth-code`, `--check-live` or `--revoke` for this procedure. No live
 login or deployment was performed during implementation. Approval belongs to the
 request owner; the instructions below are for a separately authorized deployment.
@@ -241,7 +248,8 @@ replacement leaves a complete new file. This is process-crash atomicity, **not
 power-loss durability**: the directory entry is not fsynced, and storage/filesystem
 failure, directory replacement and nonparticipating writers are outside the claim.
 
-**Production fails closed.** `setup.py` (refresh, legacy OAuth, revoke),
+**Historical state (superseded by the current writer inventory and opt-in
+controls above).** At this stage, `setup.py` (refresh, legacy OAuth, revoke),
 `google_api.py` (refresh) and `gws_bridge.py` (refresh) do not participate in this
 lock. External `gapi-shared` writers are unknown. Metadata checks remain useful
 conflict detection but cannot close their check/replace race. No operator flag or
@@ -340,8 +348,9 @@ push or PR was performed. Adoption remains the request owner's decision.
 
 ## Cooperative exclusion revision receipt (2026-11-02)
 
-The CLI now fails closed unconditionally, before client credential access or
-network activity. Existing tracked/untracked work was retained and extended;
+At this historical stage the CLI failed closed unconditionally, before client
+credential access or network activity. The current entry uses the opt-in controls
+described above, including the explicit disable switch. Existing tracked/untracked work was retained and extended;
 legacy writers and external services were not modified. The directory lock is
 verified only with fictional participating writers, never claimed to protect
 nonparticipants. CLI refusal is tested with credential reads and Session creation
@@ -393,15 +402,16 @@ repository bridge reader against restored fictional authorized-user JSON.
 **NOT ACCEPTED for production.** A cooperating transaction primitive is implemented;
 all actual writers are not migrated or identified. No claim of complete exclusion,
 unknown-writer detection, external-reader compatibility or independent approval is
-made. Callback `login()` remains unconditionally disabled before client access,
-listener creation or exchange. There is no override flag. Do not invoke any legacy
+made. Callback `login()` now follows the opt-in controls in the current section:
+explicit invocation only, one session, ten minutes, random start URL, refusal
+while another writer runs, and `HERMES_SHARED_OAUTH_DISABLE=1` to stop startup. Do not invoke any legacy
 entry as a workaround.
 
 Source-only inventory (no deployed credential or process inspection):
 
 | Writer / route | Current coverage and remaining gate |
 | --- | --- |
-| `oauth_callback.Session._complete` | Exchange through commit uses the common transaction; public live entry disabled. |
+| `oauth_callback.Session._complete` | Exchange through commit uses the common transaction; public entry uses the opt-in controls above. |
 | `setup.check_auth` | Existing read/refresh/direct write; not migrated. |
 | `setup.exchange_auth_code` | Existing pending-state read/exchange/direct write; not migrated. |
 | `setup.revoke` | Existing read/optional refresh/revoke/unlink; not migrated. |

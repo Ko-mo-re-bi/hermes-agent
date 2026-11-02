@@ -419,7 +419,9 @@ def _revoke_locked():
         print("Token revoked with Google.")
     except Exception as e:
         print(f"Remote revocation failed (token may already be invalid): {e}")
+        return
 
+    TOKEN_PATH.with_name(TOKEN_PATH.name + ".backup").unlink(missing_ok=True)
     TOKEN_PATH.unlink(missing_ok=True)
     PENDING_AUTH_PATH.unlink(missing_ok=True)
     print(f"Deleted {TOKEN_PATH}")

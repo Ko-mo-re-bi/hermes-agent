@@ -167,7 +167,10 @@ class Session:
 def _other_writer_running() -> int:
     """Count live Google token writers other than this process (metadata only)."""
     hits = 0
-    for entry in Path("/proc").iterdir():
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return 0
+    for entry in proc.iterdir():
         if not entry.name.isdigit():
             continue
         try:
