@@ -20,8 +20,13 @@ AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 
 
-class CallbackError(Exception):
-    """Public, secret-free failure."""
+import sys
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from credential_store import (CallbackError, file_version, writer_lock, atomic_save,
+                              credential_transaction)
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -38,60 +43,6 @@ def exchange(fields):
         return json.loads(response.read(65536))
 
 
-def file_version(path):
-    """Inspect metadata only; never open the existing credential contents."""
-    try:
-        info = Path(path).lstat()
-    except FileNotFoundError:
-        return None
-    if not stat.S_ISREG(info.st_mode):
-        raise CallbackError("Credential destination must be a regular file")
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
-            info.st_ctime_ns, info.st_mode, info.st_uid, info.st_gid)
-
-
-@contextmanager
-def writer_lock(directory):
-    """Cooperative POSIX lock on the stable directory inode; never unlink it.
-
-    Only participating writers are excluded. This is not a deployment gate.
-    The isolated directory must be private, stable, and on a local filesystem.
-    """
-    if os.name != "posix":
-        raise CallbackError("Isolated writer locking requires POSIX")
-    import fcntl
-
-    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise CallbackError("Credential writer busy") from None
-        yield
-    finally:
-        os.close(fd)  # Closing also releases the lock after interruption.
-
-
-def atomic_save(path, payload, *, expected_version):
-    """Isolated cooperative transaction; never truncate or restore over a writer.
-
-    Production is blocked by login(): legacy and external writers do not yet
-    participate in this protocol. Metadata checks alone cannot exclude them.
-    """
-    path = Path(path)
-    with writer_lock(path.parent):
-        fd, name = tempfile.mkstemp(prefix=".google-oauth-", dir=path.parent)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                json.dump(payload, stream)
-                stream.flush()
-                os.fsync(stream.fileno())
-            if file_version(path) != expected_version:
-                raise CallbackError("Credential destination changed")
-            os.replace(name, path)
-        finally:
-            if os.path.exists(name):
-                os.unlink(name)
 
 
 class Session:
@@ -175,6 +126,14 @@ class Session:
         return 200, None, "<script>history.replaceState(null, '', '/complete')</script>Authorization completed"
 
     def _complete(self, params):
+        def authorize(_):
+            if file_version(self.destination) != self.destination_version:
+                raise CallbackError("Credential destination changed")
+            return self._exchange_payload(params)
+
+        credential_transaction(self.destination, authorize, read_existing=False, backup=True)
+
+    def _exchange_payload(self, params):
         token = self.transport({"grant_type": "authorization_code", "code": params["code"][0],
                                 "client_id": self.client["client_id"],
                                 "client_secret": self.client["client_secret"],
@@ -191,7 +150,7 @@ class Session:
                    "refresh_token": token["refresh_token"], "token_uri": TOKEN_URI,
                    "client_id": self.client["client_id"], "client_secret": self.client["client_secret"],
                    "scopes": granted, "expiry": (datetime.now(UTC) + timedelta(seconds=expires)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
-        atomic_save(self.destination, payload, expected_version=self.destination_version)
+        return payload
 
     def run(self):
         try:

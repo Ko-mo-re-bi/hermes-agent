@@ -167,7 +167,7 @@ def test_failures_preserve_previous_credentials(callback, tmp_path, monkeypatch,
                    **({"error": "access_denied"} if failure == "denied" else {"code": "fictional-code"}))
         assert not session.success
         assert path.read_bytes() == b"fictional-previous"
-        assert set(tmp_path.iterdir()) == previous_entries
+        assert set(tmp_path.iterdir()) - {tmp_path / ".google-token.lock"} == previous_entries
         if failure in ("state", "unicode_state", "duplicate", "denied", "expired"):
             assert not calls
         if failure not in ("state", "unicode_state", "duplicate", "expired"):
@@ -221,6 +221,9 @@ def test_protocol_success_and_reader(callback, tmp_path, inert_listener, monkeyp
     assert destination.stat().st_mode & 0o777 == 0o600
     assert finish(session, state=state, code="fictional-code")[0] == 410
     monkeypatch.syspath_prepend(str(Path(callback.__file__).parent))
+    # Restore a fictional backup through the same exclusion and feed the real reader.
+    callback.credential_transaction(destination, lambda old: {"token": "fictional-other"})
+    callback.credential_transaction(destination, lambda old: saved, read_existing=False)
     spec = importlib.util.spec_from_file_location("unit_bridge", Path(callback.__file__).with_name("gws_bridge.py"))
     bridge = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(bridge)
@@ -262,7 +265,7 @@ def test_each_required_scope_missing_preserves_old_file(callback, tmp_path, iner
     finish(session, state=session.state, code="fictional-code", scope=" ".join(callback.SCOPES))
     assert not session.success
     assert destination.read_bytes() == b"fictional-previous"
-    assert set(tmp_path.iterdir()) == previous_entries
+    assert set(tmp_path.iterdir()) - {tmp_path / ".google-token.lock"} == previous_entries
 
 
 def test_omitted_token_scope_cannot_be_supplied_by_callback(callback, tmp_path, inert_listener):
@@ -292,7 +295,7 @@ def test_atomic_save_failure_preserves_old_file(callback, tmp_path, monkeypatch,
     with pytest.raises((TypeError, OSError)):
         callback.atomic_save(destination, payload, expected_version=callback.file_version(destination))
     assert destination.read_bytes() == b"fictional-previous"
-    assert set(tmp_path.iterdir()) == previous_entries
+    assert set(tmp_path.iterdir()) - {tmp_path / ".google-token.lock"} == previous_entries
 
 
 @pytest.mark.parametrize("stage", ["exchange", "fsync"])
@@ -456,3 +459,82 @@ def test_interrupt_before_commit_preserves_file_and_releases_lock(callback, tmp_
     monkeypatch.setattr(callback.os, "replace", original)
     callback.atomic_save(destination, {"token": "fictional-retry"},
                          expected_version=callback.file_version(destination))
+
+
+@pytest.mark.platforms("posix")
+def test_transaction_excludes_before_read_and_during_refresh(callback, tmp_path, monkeypatch):
+    destination = tmp_path / "token"
+    destination.write_text('{"generation": 1}')
+    original_read = callback.Path.read_text
+    observed = []
+
+    def competing_writer():
+        with pytest.raises(callback.CallbackError, match="busy"):
+            callback.credential_transaction(destination, lambda old: {"generation": 99})
+        observed.append("excluded")
+
+    def read(path, *args, **kwargs):
+        competing_writer()
+        return original_read(path, *args, **kwargs)
+
+    def refresh(current):
+        assert current == {"generation": 1}
+        competing_writer()
+        return {"generation": current["generation"] + 1}
+
+    monkeypatch.setattr(callback.Path, "read_text", read)
+    assert callback.credential_transaction(destination, refresh) == {"generation": 2}
+    monkeypatch.setattr(callback.Path, "read_text", original_read)
+    assert observed == ["excluded", "excluded"]
+    assert json.loads(destination.read_text()) == {"generation": 2}
+
+
+@pytest.mark.platforms("posix")
+@pytest.mark.parametrize("stage", ["refresh", "serialize", "replace", "interrupt"])
+def test_transaction_failure_and_backup_restoration(callback, tmp_path, monkeypatch, stage):
+    destination = tmp_path / "token"
+    backup = {"token": "fictional-backup", "generation": 1}
+    destination.write_text(json.dumps(backup))
+    previous = destination.read_bytes()
+    original_replace = callback.os.replace
+
+    def refresh(current):
+        assert current == backup
+        if stage == "refresh":
+            raise RuntimeError("fictional-refresh-failure")
+        if stage == "interrupt":
+            raise KeyboardInterrupt
+        return {"token": object() if stage == "serialize" else "fictional-new"}
+
+    if stage == "replace":
+        def fail(*args):
+            raise OSError("fictional-storage-failure")
+        monkeypatch.setattr(callback.os, "replace", fail)
+    with pytest.raises((RuntimeError, TypeError, OSError, KeyboardInterrupt)):
+        callback.credential_transaction(destination, refresh)
+    assert destination.read_bytes() == previous
+    assert not list(tmp_path.glob(".google-oauth-*"))
+    monkeypatch.setattr(callback.os, "replace", original_replace)
+    callback.credential_transaction(destination, lambda old: {"token": "fictional-new"})
+    callback.credential_transaction(destination, lambda old: backup, read_existing=False)
+    assert json.loads(destination.read_text()) == backup
+    assert destination.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.platforms("posix")
+def test_callback_holds_lock_during_exchange(callback, tmp_path, inert_listener):
+    destination = tmp_path / "token"
+    destination.write_text("fictional-previous")
+    observed = []
+
+    def transport(fields):
+        with pytest.raises(callback.CallbackError, match="busy"):
+            callback.credential_transaction(destination, lambda old: grant(callback))
+        observed.append(True)
+        return grant(callback)
+
+    session = callback.Session(client(), destination, scopes=callback.SCOPES, transport=transport)
+    begin(session)
+    finish(session, state=session.state, code="fictional-code")
+    assert observed == [True]
+    assert session.success

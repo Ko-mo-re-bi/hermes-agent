@@ -40,6 +40,8 @@ _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+from credential_store import refresh_session, atomic_save, file_version, writer_lock
+
 from _hermes_home import display_hermes_home, get_hermes_home
 
 HERMES_HOME = get_hermes_home()
@@ -158,63 +160,66 @@ def check_auth(quiet: bool = False):
     from google.auth.transport.requests import Request
 
     try:
-        # Don't pass scopes — user may have authorized only a subset.
-        # Passing scopes forces google-auth to validate them on refresh,
-        # which fails with invalid_scope if the token has fewer scopes
-        # than requested.
-        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH))
-    except Exception as e:
-        print(f"TOKEN_CORRUPT: {e}")
-        return False
+        with refresh_session(TOKEN_PATH) as (previous, save):
+            try:
+                # Don't pass scopes — user may have authorized only a subset.
+                # Passing scopes forces google-auth to validate them on refresh,
+                # which fails with invalid_scope if the token has fewer scopes
+                # than requested.
+                creds = Credentials.from_authorized_user_info(previous)
+            except Exception as e:
+                print(f"TOKEN_CORRUPT: {e}")
+                return False
 
-    payload = _load_token_payload(TOKEN_PATH)
-    if creds.valid:
-        missing_scopes = _missing_scopes_from_payload(payload)
-        if missing_scopes:
-            print(f"AUTHENTICATED (partial): Token valid but missing {len(missing_scopes)} scopes:")
-            for s in missing_scopes:
-                print(f"  - {s}")
-        if not quiet:
-            print(f"AUTHENTICATED: Token valid at {TOKEN_PATH}")
-        return True
+            payload = _load_token_payload(TOKEN_PATH)
+            if creds.valid:
+                missing_scopes = _missing_scopes_from_payload(payload)
+                if missing_scopes:
+                    print(f"AUTHENTICATED (partial): Token valid but missing {len(missing_scopes)} scopes:")
+                    for s in missing_scopes:
+                        print(f"  - {s}")
+                if not quiet:
+                    print(f"AUTHENTICATED: Token valid at {TOKEN_PATH}")
+                return True
 
-    if creds.expired and creds.refresh_token:
-        try:
-            creds.refresh(Request())
-            TOKEN_PATH.write_text(
-                json.dumps(
-                    _normalize_authorized_user_payload(json.loads(creds.to_json())),
-                    indent=2,
-                ), encoding="utf-8"
-            )
-            missing_scopes = _missing_scopes_from_payload(_load_token_payload(TOKEN_PATH))
-            if missing_scopes:
-                print(f"AUTHENTICATED (partial): Token refreshed but missing {len(missing_scopes)} scopes:")
-                for s in missing_scopes:
-                    print(f"  - {s}")
-            if not quiet:
-                print(f"AUTHENTICATED: Token refreshed at {TOKEN_PATH}")
-            return True
-        except Exception as e:
-            err_str = str(e).lower()
-            if "disabled_client" in err_str or "invalid_client" in err_str:
-                print(f"OAUTH_CLIENT_DISABLED: {e}")
-                print("  The OAuth client or Google account has been disabled.")
-                print("  Steps to resolve:")
-                print("    1. Check your Google Cloud Console — verify the OAuth client is not disabled")
-                print("    2. Check if your Google account itself has been disabled at myaccount.google.com")
-                print("    3. If the account is disabled, you can appeal at accounts.google.com/signin/recovery")
-                print("    4. Do NOT retry API calls with a disabled account — this may worsen the situation")
-                print("    5. If the OAuth client is disabled, create a new one in Google Cloud Console")
-            elif "token_revoked" in err_str or "invalid_grant" in err_str:
-                print(f"TOKEN_REVOKED: {e}")
-                print("  Re-run setup to re-authenticate.")
-            else:
-                print(f"REFRESH_FAILED: {e}")
+            if creds.expired and creds.refresh_token:
+                try:
+                    creds.refresh(Request())
+                    saved = save(
+                        _normalize_authorized_user_payload(json.loads(creds.to_json())))
+                    creds = Credentials.from_authorized_user_info(saved)
+                    missing_scopes = _missing_scopes_from_payload(_load_token_payload(TOKEN_PATH))
+                    if missing_scopes:
+                        print(f"AUTHENTICATED (partial): Token refreshed but missing {len(missing_scopes)} scopes:")
+                        for s in missing_scopes:
+                            print(f"  - {s}")
+                    if not quiet:
+                        print(f"AUTHENTICATED: Token refreshed at {TOKEN_PATH}")
+                    return True
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "disabled_client" in err_str or "invalid_client" in err_str:
+                        print(f"OAUTH_CLIENT_DISABLED: {e}")
+                        print("  The OAuth client or Google account has been disabled.")
+                        print("  Steps to resolve:")
+                        print("    1. Check your Google Cloud Console — verify the OAuth client is not disabled")
+                        print("    2. Check if your Google account itself has been disabled at myaccount.google.com")
+                        print("    3. If the account is disabled, you can appeal at accounts.google.com/signin/recovery")
+                        print("    4. Do NOT retry API calls with a disabled account — this may worsen the situation")
+                        print("    5. If the OAuth client is disabled, create a new one in Google Cloud Console")
+                    elif "token_revoked" in err_str or "invalid_grant" in err_str:
+                        print(f"TOKEN_REVOKED: {e}")
+                        print("  Re-run setup to re-authenticate.")
+                    else:
+                        print(f"REFRESH_FAILED: {e}")
+                    return False
+
+            print("TOKEN_INVALID: Re-run setup.")
             return False
 
-    print("TOKEN_INVALID: Re-run setup.")
-    return False
+    except (OSError, json.JSONDecodeError):
+        print("TOKEN_CORRUPT: Cannot read stored credentials.")
+        return False
 
 
 def store_client_secret(path: str):
@@ -317,6 +322,7 @@ def get_auth_url():
 
 def exchange_auth_code(code: str):
     """Exchange the authorization code for a token and save it."""
+    destination_version = file_version(TOKEN_PATH)
     if not CLIENT_SECRET_PATH.exists():
         print("ERROR: No client secret stored. Run --client-secret first.")
         sys.exit(1)
@@ -375,14 +381,19 @@ def exchange_auth_code(code: str):
         print(f"WARNING: Token missing some Google Workspace scopes: {', '.join(missing_scopes)}")
         print("Some services may not be available.")
 
-    TOKEN_PATH.write_text(json.dumps(token_payload, indent=2), encoding="utf-8")
+    atomic_save(TOKEN_PATH, token_payload, expected_version=destination_version)
     PENDING_AUTH_PATH.unlink(missing_ok=True)
     print(f"OK: Authenticated. Token saved to {TOKEN_PATH}")
     print(f"Profile-scoped token location: {display_hermes_home()}/google_token.json")
 
 
 def revoke():
-    """Revoke stored token and delete it."""
+    """Exclude refresh and callback throughout remote revocation and deletion."""
+    with writer_lock(TOKEN_PATH.parent):
+        _revoke_locked()
+
+
+def _revoke_locked():
     if not TOKEN_PATH.exists():
         print("No token to revoke.")
         return

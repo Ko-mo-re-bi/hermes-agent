@@ -36,6 +36,8 @@ _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+from credential_store import refresh_session, credential_transaction
+
 from _hermes_home import get_hermes_home
 
 HERMES_HOME = get_hermes_home()
@@ -250,19 +252,17 @@ def get_credentials():
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
 
-    creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), _stored_token_scopes())
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        TOKEN_PATH.write_text(
-            json.dumps(
-                _normalize_authorized_user_payload(json.loads(creds.to_json())),
-                indent=2,
-            ), encoding="utf-8"
-        )
-    if not creds.valid:
-        print("Token is invalid. Re-run setup.", file=sys.stderr)
-        sys.exit(1)
-    return creds
+    with refresh_session(TOKEN_PATH) as (previous, save):
+        creds = Credentials.from_authorized_user_info(previous, previous.get("scopes") or SCOPES)
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            saved = save(
+                _normalize_authorized_user_payload(json.loads(creds.to_json())))
+            creds = Credentials.from_authorized_user_info(saved, saved.get("scopes") or SCOPES)
+        if not creds.valid:
+            print("Token is invalid. Re-run setup.", file=sys.stderr)
+            sys.exit(1)
+        return creds
 
 
 def build_service(api, version):
