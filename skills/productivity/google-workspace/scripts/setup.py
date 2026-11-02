@@ -420,6 +420,8 @@ def main():
     group.add_argument("--check", action="store_true", help="Check if auth is valid (exit 0=yes, 1=no)")
     group.add_argument("--check-live", action="store_true", help="Check auth with a real API call (detects disabled_client)")
     group.add_argument("--client-secret", metavar="PATH", help="Store OAuth client_secret.json")
+    group.add_argument("--callback", action="store_true", help="Single-use loopback login (no pasted codes)")
+    parser.add_argument("--callback-port", type=int, default=8765, help="Loopback port for SSH forwarding")
     group.add_argument("--auth-url", action="store_true", help="Print OAuth URL for user to visit")
     group.add_argument("--auth-code", metavar="CODE", help="Exchange auth code for token")
     group.add_argument("--revoke", action="store_true", help="Revoke and delete stored token")
@@ -432,6 +434,9 @@ def main():
         sys.exit(0 if check_auth_live() else 1)
     elif args.client_secret:
         store_client_secret(args.client_secret)
+    elif args.callback:
+        from oauth_callback import login
+        sys.exit(0 if login(CLIENT_SECRET_PATH, TOKEN_PATH, args.callback_port, SCOPES) else 1)
     elif args.auth_url:
         get_auth_url()
     elif args.auth_code:

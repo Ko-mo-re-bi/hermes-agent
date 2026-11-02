@@ -1,0 +1,212 @@
+"""Single-use loopback Google OAuth; no callback data is printed or persisted."""
+from contextlib import contextmanager
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import stat
+import tempfile
+import time
+from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+
+AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
+TOKEN_URI = "https://oauth2.googleapis.com/token"
+
+
+class CallbackError(Exception):
+    """Public, secret-free failure."""
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise CallbackError("Token redirect refused")
+
+
+def exchange(fields):
+    # Ignore proxy environment and refuse redirects carrying the POST secrets.
+    opener = build_opener(ProxyHandler({}), NoRedirect())
+    request = Request(TOKEN_URI, urlencode(fields).encode(),
+                      {"Content-Type": "application/x-www-form-urlencoded"})
+    with opener.open(request, timeout=20) as response:
+        return json.loads(response.read(65536))
+
+
+def file_version(path):
+    """Inspect metadata only; never open the existing credential contents."""
+    try:
+        info = Path(path).lstat()
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISREG(info.st_mode):
+        raise CallbackError("Credential destination must be a regular file")
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns,
+            info.st_ctime_ns, info.st_mode, info.st_uid, info.st_gid)
+
+
+@contextmanager
+def writer_lock(directory):
+    """Cooperative POSIX lock on the stable directory inode; never unlink it.
+
+    Only participating writers are excluded. This is not a deployment gate.
+    The isolated directory must be private, stable, and on a local filesystem.
+    """
+    if os.name != "posix":
+        raise CallbackError("Isolated writer locking requires POSIX")
+    import fcntl
+
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise CallbackError("Credential writer busy") from None
+        yield
+    finally:
+        os.close(fd)  # Closing also releases the lock after interruption.
+
+
+def atomic_save(path, payload, *, expected_version):
+    """Isolated cooperative transaction; never truncate or restore over a writer.
+
+    Production is blocked by login(): legacy and external writers do not yet
+    participate in this protocol. Metadata checks alone cannot exclude them.
+    """
+    path = Path(path)
+    with writer_lock(path.parent):
+        fd, name = tempfile.mkstemp(prefix=".google-oauth-", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                json.dump(payload, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+            if file_version(path) != expected_version:
+                raise CallbackError("Credential destination changed")
+            os.replace(name, path)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
+
+
+class Session:
+    def __init__(self, client, destination, *, scopes, port=0, lifetime=300, transport=exchange):
+        if not client.get("client_id") or not client.get("client_secret"):
+            raise CallbackError("Desktop client required")
+        if not 0 < lifetime <= 600:
+            raise CallbackError("Invalid lifetime")
+        self.scopes = tuple(scopes)
+        if not self.scopes:
+            raise CallbackError("Required scopes missing")
+        self.client = client
+        self.destination = Path(destination)
+        self.destination_version = file_version(self.destination)
+        self.transport = transport
+        self.state = secrets.token_urlsafe(32)
+        self.verifier = secrets.token_urlsafe(64)
+        self.deadline = time.monotonic() + lifetime
+        self.start_path = "/start/" + secrets.token_urlsafe(32)
+        self.started = False
+        self.done = False
+        self.success = False
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass  # Request targets contain authorization codes.
+
+            def do_GET(self):
+                self.connection.settimeout(2)
+                status, location, body = owner.request(self.path, self.headers.get("Host"))
+                self.send_response(status)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                if location:
+                    self.send_header("Location", location)
+                self.end_headers()
+                self.wfile.write(body.encode())
+
+            def handle(self):
+                self.connection.settimeout(2)
+                super().handle()
+
+        self.server = HTTPServer(("127.0.0.1", port), Handler)
+        self.server.timeout = 0.2
+        self.origin = f"http://127.0.0.1:{self.server.server_port}"
+        self.redirect = self.origin + "/callback"
+
+    def request(self, target, host):
+        if host != urlsplit(self.origin).netloc:
+            return 400, None, "Invalid host"
+        if self.done or time.monotonic() >= self.deadline:
+            return 410, None, "Session closed"
+        parsed = urlsplit(target)
+        if hmac.compare_digest(parsed.path.encode(), self.start_path.encode()) and not parsed.query and not self.started:
+            self.started = True
+            challenge = base64.urlsafe_b64encode(hashlib.sha256(self.verifier.encode()).digest()).rstrip(b"=").decode()
+            return 302, AUTH_URI + "?" + urlencode({
+                "client_id": self.client["client_id"], "redirect_uri": self.redirect,
+                "response_type": "code", "scope": " ".join(self.scopes), "state": self.state,
+                "code_challenge": challenge, "code_challenge_method": "S256",
+                "access_type": "offline", "prompt": "consent"}), ""
+        if parsed.path != "/callback" or not self.started:
+            return 404, None, "Not found"
+        params = parse_qs(parsed.query, keep_blank_values=True)
+        if (len(params.get("state", [])) != 1 or
+                not hmac.compare_digest(params["state"][0].encode(), self.state.encode())):
+            return 400, None, "Invalid state"
+        self.done = True  # A valid-state callback consumes the session, including errors.
+        try:
+            if "error" in params or len(params.get("code", [])) != 1 or not params["code"][0]:
+                raise CallbackError("Authorization refused")
+            self._complete(params)
+            self.success = True
+        except Exception:
+            return 200, None, "<script>history.replaceState(null, '', '/failed')</script>Authorization failed; previous credentials preserved"
+        finally:
+            self.verifier = ""
+            self.state = ""
+        return 200, None, "<script>history.replaceState(null, '', '/complete')</script>Authorization completed"
+
+    def _complete(self, params):
+        token = self.transport({"grant_type": "authorization_code", "code": params["code"][0],
+                                "client_id": self.client["client_id"],
+                                "client_secret": self.client["client_secret"],
+                                "redirect_uri": self.redirect, "code_verifier": self.verifier})
+        granted = token.get("scope", "").split()
+        if (not all(isinstance(token.get(k), str) and token[k] for k in ("access_token", "refresh_token"))
+                or token.get("token_type", "").lower() != "bearer"
+                or not set(self.scopes).issubset(granted)):
+            raise CallbackError("Incomplete grant")
+        expires = int(token["expires_in"])
+        if expires <= 0 or time.monotonic() >= self.deadline:
+            raise CallbackError("Expired grant")
+        payload = {"type": "authorized_user", "token": token["access_token"],
+                   "refresh_token": token["refresh_token"], "token_uri": TOKEN_URI,
+                   "client_id": self.client["client_id"], "client_secret": self.client["client_secret"],
+                   "scopes": granted, "expiry": (datetime.now(UTC) + timedelta(seconds=expires)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")}
+        atomic_save(self.destination, payload, expected_version=self.destination_version)
+
+    def run(self):
+        try:
+            print(f"Open in your own browser: {self.origin}{self.start_path}", flush=True)
+            while not self.done and time.monotonic() < self.deadline:
+                self.server.handle_request()
+            return self.success
+        finally:
+            self.server.server_close()
+            self.verifier = ""
+            self.state = ""
+
+
+def login(client_path, destination, port, scopes):
+    # Fail before opening client credentials, binding a socket or contacting Google.
+    # A local lock cannot protect legacy refresh writers or an unknown wrapper.
+    print("Authorization disabled: shared writer exclusion is unverified")
+    return False
