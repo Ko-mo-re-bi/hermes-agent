@@ -53,3 +53,38 @@ def test_auth_uses_pm_import_check(setup_module, monkeypatch):
     setup_module._ensure_deps()
 
     ensure.assert_called_once_with("google")
+
+
+@pytest.mark.parametrize("failure", [None, OSError("fictional revocation failure")])
+def test_revoke_deletes_backup_only_after_remote_success(setup_module, monkeypatch, tmp_path, failure):
+    import sys
+    import types
+    import urllib.request
+
+    token = tmp_path / "google_token.json"
+    backup = tmp_path / "google_token.json.backup"
+    pending = tmp_path / "google_oauth_pending.json"
+    for path in (token, backup, pending):
+        path.write_text('{"token": "fictional-token"}')
+    monkeypatch.setattr(setup_module, "TOKEN_PATH", token)
+    monkeypatch.setattr(setup_module, "PENDING_AUTH_PATH", pending)
+    monkeypatch.setattr(setup_module, "_ensure_deps", Mock())
+    credentials = types.ModuleType("google.oauth2.credentials")
+    credentials.Credentials = Mock()
+    credentials.Credentials.from_authorized_user_file.return_value = Mock(
+        expired=False, token="fictional-token")
+    transport = types.ModuleType("google.auth.transport.requests")
+    transport.Request = Mock()
+    monkeypatch.setitem(sys.modules, "google.oauth2.credentials", credentials)
+    monkeypatch.setitem(sys.modules, "google.auth.transport.requests", transport)
+    remote = Mock(side_effect=failure)
+    monkeypatch.setattr(urllib.request, "urlopen", remote)
+
+    setup_module.revoke()
+
+    remote.assert_called_once()
+    for path in (token, backup, pending):
+        if failure is None:
+            assert not path.exists()
+        else:
+            assert path.read_text() == '{"token": "fictional-token"}'

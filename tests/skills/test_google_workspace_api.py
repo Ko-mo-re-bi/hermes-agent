@@ -170,8 +170,8 @@ def test_api_get_credentials_refresh_persists_authorized_user_type(api_module, m
 
     class FakeCredentialsModule:
         @staticmethod
-        def from_authorized_user_file(filename, scopes):
-            assert filename == str(token_path)
+        def from_authorized_user_info(payload, scopes):
+            assert payload["refresh_token"] == "1//refresh"
             assert scopes == api_module.SCOPES
             return FakeCredentials()
 

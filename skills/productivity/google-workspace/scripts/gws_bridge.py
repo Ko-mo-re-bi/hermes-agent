@@ -15,6 +15,8 @@ _SCRIPTS_DIR = str(Path(__file__).resolve().parent)
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
+from credential_store import refresh_session
+
 from _hermes_home import get_hermes_home
 
 
@@ -29,7 +31,7 @@ def _normalize_authorized_user_payload(payload: dict) -> dict:
     return normalized
 
 
-def refresh_token(token_data: dict) -> dict:
+def _refresh_token_locked(token_data: dict) -> dict:
     """Refresh the access token using the refresh token."""
     import urllib.error
     import urllib.parse
@@ -69,16 +71,22 @@ def refresh_token(token_data: dict) -> dict:
         print(f"ERROR: Token refresh failed (network): {e}", file=sys.stderr)
         sys.exit(1)
 
+    token_data = dict(token_data)
     token_data["token"] = result["access_token"]
     token_data["expiry"] = datetime.fromtimestamp(
         datetime.now(UTC).timestamp() + result["expires_in"],
         tz=UTC,
     ).isoformat()
 
-    get_token_path().write_text(
-        json.dumps(_normalize_authorized_user_payload(token_data), indent=2), encoding="utf-8"
-    )
-    return token_data
+    return _normalize_authorized_user_payload(token_data)
+
+
+def refresh_token(token_data: dict) -> dict:
+    """Refresh only if the locked reread still matches the caller's snapshot."""
+    with refresh_session(get_token_path()) as (current, save):
+        if current != token_data:
+            return current
+        return save(_refresh_token_locked(current))
 
 
 def get_valid_token() -> str:
@@ -88,16 +96,16 @@ def get_valid_token() -> str:
         print("ERROR: No Google token found. Run setup.py --auth-url first.", file=sys.stderr)
         sys.exit(1)
 
-    token_data = json.loads(token_path.read_text(encoding="utf-8"))
+    with refresh_session(token_path) as (token_data, save):
 
-    expiry = token_data.get("expiry", "")
-    if expiry:
-        exp_dt = datetime.fromisoformat(expiry)
-        now = datetime.now(UTC)
-        if now >= exp_dt:
-            token_data = refresh_token(token_data)
+        expiry = token_data.get("expiry", "")
+        if expiry:
+            exp_dt = datetime.fromisoformat(expiry)
+            now = datetime.now(UTC)
+            if now >= exp_dt:
+                token_data = save(_refresh_token_locked(token_data))
 
-    return token_data["token"]
+        return token_data["token"]
 
 
 def main():

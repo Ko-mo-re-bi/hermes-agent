@@ -341,3 +341,14 @@ All commands return JSON. Parse with `jq` or read directly. Key fields:
 ```bash
 $GSETUP --revoke
 ```
+
+### Shared Drive / Calendar callback procedure
+
+For a loopback callback without pasted codes, see
+[the shared callback procedure](references/shared-oauth-callback.md).
+Confirm the existing shared reader, owning profile, full existing setup scope contract and
+SSH reachability before any separately approved live login.
+
+The isolated `--callback` prototype currently fails closed before credential reads or
+network activity: existing shared refresh writers lack a verified common exclusion
+contract. See `references/shared-oauth-callback.md` for the deployment gates.

@@ -1,0 +1,70 @@
+Google shared OAuth refresh-exclusion correction — 2026-11-03
+Branch: hermes/google-shared-oauth-callback-20261102
+Supersedes the prior independent PASS, rejected by the requester.
+Activation CLOSED. No real credentials, production, network, push or PR.
+
+RED: revised refresh-time flock probe failed for all 3 actual routes before fix.
+Canonical runner: 3 failed, 8 deselected. Failure: flock unexpectedly acquired.
+The old test proved stale-save handling only, not refresh exclusion.
+
+Implementation: common refresh_session holds the same sibling flock from reread
+through SDK/HTTP refresh and guarded atomic persistence. Waiting readers reuse
+the preceding winner. Callback/other writer contention remains nonblocking.
+Save rereads and discards the computed result if an uncooperative writer changed
+JSON during refresh. No callback activation or deployment change.
+
+Verification complete for isolated fictional correction scope; final receipt below.
+Runner uses existing pytest interpreter through /tmp/google-oauth-test-python;
+only scratch root is redirected to writable /tmp (repository runner unchanged).
+Initial environment provisioning failed on read-only uv cache; no install occurred.
+Initial runner failed on read-only /var/tmp, then used the scratch wrapper.
+First post-fix suite: 70 passed, 2 failed, 1 skipped: SDK double kept expired
+expiry after refresh, provoking a legitimate bridge re-refresh. Double fixed to
+advance expiry; subsequent suite 72 passed, 0 failed, 1 skipped.
+
+Unmet: live Drive/Calendar minimal reads (prohibited), merged/live skills commit
+identity, deployed external writer inventory, actual hardware power-loss proof.
+Keep fail-closed. PR must go to separately authorized operator.
+Reapplication with --check: shared-oauth-callback.md handoff section.
+
+FINAL IMPLEMENTATION VERDICT: PASS within fictional isolated scope.
+Canonical run: 6 files, 75 passed, 0 failed, 1 skipped, 9.7s.
+INDEPENDENT /root/independent_refresh_review: PASS; no blocking finding.
+Independent canonical run: 6 files, 75 passed, 0 failed, 1 skipped, 8.1s.
+Independent agent made no edits. Code/tests frozen throughout independent review.
+Skip: actual callback HTTP round-trip, AF_INET sandbox restriction.
+No live network or real credentials used in these runs.
+
+Shared-store measured cases (14 PASS):
+3 leaders x three actual concurrent entry points, refresh-time flock probe,
+contender lock-entry event synchronization and winner reuse without replacement;
+3 in-flight refresh results discarded after nonparticipant replacement;
+6 actual-route SIGKILL cases (3 routes x before/after replace), recovery/modes;
+1 callback backup -> restore -> existing bridge reader;
+1 file fsync -> replace -> directory fsync ordering.
+Related remaining tests: 61 PASS, 1 SKIP.
+Static source search: all 3 refresh entry points use refresh_session, no
+commit_refresh remains. Ruff changed Python files PASS; git diff --check PASS.
+No full repository suite/check or actual power-loss simulation claimed.
+
+Commit not performed: this worktree git-dir resolves outside the writable scope
+at /home/hermes-svc/.hermes/hermes-agent/.git/worktrees/google-shared-oauth-20261102;
+Git administrative files are read-only under the current permission profile.
+No permission escalation requested or attempted. All original uncommitted work
+is retained. Handoff includes the untracked common module, test and this receipt.
+Conventional Commit suggestion for authorized integrator:
+fix(google-workspace): serialize shared token refresh transactions
+No GitHub write/PR/main write or installed skills changes performed.
+
+Reviewed hashes (matched independent review):
+2286b206a83dd9c6761d7ef55ba5f56207b4e317a53e03c3ad9deeb0892a978d  skills/productivity/google-workspace/scripts/credential_store.py
+155e22edc49ec6fe7608456505cb42bf167232044f6e885dffc85d60b5f5a0b5  skills/productivity/google-workspace/scripts/google_api.py
+20256a1b852d1b4fcd725a1a99593572ffe3af3e91330d0a62f78e355ab0cecd  skills/productivity/google-workspace/scripts/gws_bridge.py
+0d1c25a0ec68ea3d50006858c2d2a02f46c76709534447b1cfb4e43d28ab9e7e  skills/productivity/google-workspace/scripts/oauth_callback.py
+085cd76fa07a30e9830b9cc63eae2deb4330b69d32109c5d2905b9c6466b9df9  skills/productivity/google-workspace/scripts/setup.py
+e0e2339b6c2d675673ae8d9c796db7fe5fd1b1a4f21683a5cd9931a80166c361  tests/skills/test_google_workspace_api.py
+5f86456eda2aed040284debe764ea1bd4a0826e1ddf86cff4783580b1c12f8b2  tests/skills/test_google_workspace_callback.py
+6be4a5cca065de09e600fce64bb8fd471a3ef3af1486e544bbd82d84714c7ebc  tests/skills/test_google_workspace_credential_files.py
+f4c1dbdeb1d2c56a242033d63a1220bba1d1421094ef02bef0cd2494613a9878  tests/skills/test_google_workspace_setup.py
+39481494aea79ef3c7d7c66c02fb730d424a49002dec34cdea8cd66c668d54ac  tests/skills/test_google_workspace_setup_deps.py
+c89ee5435e25c865c878b9b880fa27c12a6a9b75808593488df0480b0dbdba06  tests/skills/test_google_workspace_shared_store.py
