@@ -582,7 +582,14 @@ def _probe_fork_bomb(argv: list) -> Optional[bool]:
         result = run_git(argv, ["--version"], timeout=15, **_GIT_TEXT_KW)
     except Exception:
         return None
-    return "fork bomb" in ((result.stdout or "") + (result.stderr or "")).lower()
+    output = ((result.stdout or "") + (result.stderr or "")).lower()
+    if "fork bomb" in output:
+        return True
+    # A nonzero exit code (or unrecognizable version output) does not prove
+    # this candidate is usable. Do not replace the shim with such a binary.
+    if result.returncode != 0 or not (result.stdout or "").strip().lower().startswith("git version"):
+        return None
+    return False
 
 
 def _git_is_trampoline(git_cmd: list) -> bool:
