@@ -3,11 +3,12 @@
 The live Windows test checks real git.exe execution; these tests pin the safe
 PATH installation-root discovery independently of the runner's installation.
 """
-from hermes_cli import update_cmd_git as git
-from hermes_platform.resolver import Candidate, Resolution
 from subprocess import CompletedProcess
 
 import pytest
+
+from hermes_cli import update_cmd_git as git
+from hermes_platform.resolver import Candidate, Resolution
 
 
 def test_git_core_discovery_from_toolcache_path_shim(tmp_path, monkeypatch):
