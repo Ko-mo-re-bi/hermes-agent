@@ -524,7 +524,10 @@ def test_update_git_plumbing_spawns_hide_console_window(monkeypatch, tmp_path):
 
     def fake_run(cmd, **kwargs):
         captured.append((list(cmd), kwargs))
-        return _Completed(stdout="main\nabc123\n", returncode=0)
+        # The version probe now rejects non-Git output. Keep the fixture
+        # realistic without weakening the window-flag assertions below.
+        output = "git version 2.53.0\n" if cmd[-1] == "--version" else "main\nabc123\n"
+        return _Completed(stdout=output, returncode=0)
 
     monkeypatch.setattr(update_cmd_git, "windows_hide_flags", lambda: _CREATE_NO_WINDOW)
     monkeypatch.setattr(update_cmd_git, "_GIT_TEXT_KW",
